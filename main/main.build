@@ -1,0 +1,55 @@
+include(Path: ../globals.build)
+
+compile(
+	out javac,
+	in testing = false,
+) {
+	$apijavac = include(compile, Path: ../api/api.build)[javac]
+	$javac = saker.java.compile(
+		SourceDirectories: [
+			src/,
+			../asm/v7.2/,
+		],
+		ClassPath: [
+			$apijavac,
+			#only the saker.util, no transitive for now. TODO fix
+			saker.java.classpath.bundle(nest.dependency.resolve(
+				Bundles: saker.util,
+				Filters: nest.dependency.filter.kind([])
+			)),
+		],
+		Identifier: "main{ $testing ? "-testing" : "" }",
+		CompilerOptions: global(COMPILER_OPTIONS),
+	)
+}
+export(
+	out javac,
+	out jar,
+){
+	$compile = include(compile)
+	$javac = $compile[javac]
+	$jar = saker.jar.create(
+		Output: saker.rmi.jar,
+		Resources: [
+			{
+				Directory: $javac[ClassDirectory],
+				Resources: **
+			},
+			{
+				Directory: res/,
+				Resources: **,
+			}
+		],
+		Manifest: {
+			MainAttributes: {
+				Nest-Bundle-Format-Version: 1,
+				Nest-Bundle-Identifier: "saker.rmi-v{ global(VERSION_saker.rmi) }",
+				Nest-Bundle-Source: "saker.rmi-sources-v{ global(VERSION_saker.rmi) }",
+			},
+		},
+	)
+}
+install(){
+	$export = include(export)
+	nest.local.install($export[jar][Path])
+}

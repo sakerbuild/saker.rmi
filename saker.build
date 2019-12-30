@@ -1,0 +1,80 @@
+include(Path: globals.build)
+
+static(VERSION_saker.build) = nest.dependency.resolve(
+	saker.build,
+	Filters: nest.dependency.filter.kind([]),
+)[Bundles][0][BundleIdentifier][VersionNumber]
+
+export(
+	out sourcesjar,
+){
+	$sourcesjar = saker.jar.create(
+		Output: saker.rmi-sources.jar,
+		Resources: [
+			{
+				Directory: [
+					api/src/,
+					main/src/,
+				],
+				Resources: **/*.java
+			}
+		],
+		Manifest: {
+			MainAttributes: {
+				Nest-Bundle-Format-Version: 1,
+				Nest-Bundle-Identifier: "saker.rmi-sources-v{ global(VERSION_saker.rmi) }",
+			},
+		},
+	)
+}
+install(){
+	$export = include(export)
+	nest.local.install($export[sourcesjar][Path])
+}
+installall(){
+	include(install, Path: api/api.build)
+	include(install, Path: main/main.build)
+	include(install)
+}
+test(){
+	# TODO remove lib/saker_testutils.jar dependency
+	$compile = include(compile, Path: main/main.build, testing: true)
+	$testcompile = saker.java.compile(
+		SourceDirectories: test/src/,
+		ClassPath: [
+			$compile[javac],
+			saker.java.classpath.bundle([
+				"saker.build-test-runner-v{ static(VERSION_saker.build) }",
+				"saker.build-test-utils-v{ static(VERSION_saker.build) }",
+			]),
+		],
+		Identifier: tests
+	)
+	
+	$test = saker.java.test(
+		TestRunnerClassPath: [
+			saker.java.classpath.bundle("saker.build-test-runner-v{ static(VERSION_saker.build) }"),
+		],
+		ClassPath: $compile[javac],
+		TestInvokerClass: testing.saker.SakerJavaTestingInvoker,
+		TestClassPath: [
+			$testcompile[ClassDirectory],
+			saker.java.classpath.bundle([
+				"saker.build-test-v{ static(VERSION_saker.build) }",
+				"saker.build-test-utils-v{ static(VERSION_saker.build) }",
+			]),
+		],
+		TestClasses: [
+			**.*Test
+		],
+		NonDeterministicTests: **,
+		TestInvokerParameters: {
+			TimeoutMillis: 120000,
+		},
+		WorkingDirectory: test/resources/,
+		MaxJVMCount: 1,
+		FailFast: true,
+		AbortOnFail: true,
+		Verbose: true,
+	)
+}

@@ -1,0 +1,2 @@
+saker.rmi-api
+	classpath: [this]

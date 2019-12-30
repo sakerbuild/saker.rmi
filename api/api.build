@@ -1,0 +1,44 @@
+include(Path: ../globals.build)
+
+compile(
+	out javac,
+) {
+	$javac = saker.java.compile(
+		SourceDirectories: src/,
+		ClassPath: [
+			saker.java.classpath.bundle(nest.dependency.resolve(
+				saker.apiextract-api,
+				Filters: nest.dependency.filter.compile(CompileTransitive: false),
+			)),
+		],
+		Identifier: api,
+		CompilerOptions: global(COMPILER_OPTIONS),
+	)
+}
+export(
+	out javac,
+	out jar,
+){
+	$compile = include(compile)
+	$javac = $compile[javac]
+	$jar = saker.jar.create(
+		Output: saker.rmi-api.jar,
+		Resources: [
+			{
+				Directory: $javac[ClassDirectory],
+				Resources: **
+			},
+		],
+		Manifest: {
+			MainAttributes: {
+				Nest-Bundle-Format-Version: 1,
+				Nest-Bundle-Identifier: "saker.rmi-api-v{ global(VERSION_saker.rmi) }",
+				Nest-Bundle-Source: "saker.rmi-sources-v{ global(VERSION_saker.rmi) }",
+			},
+		},
+	)
+}
+install(){
+	$export = include(export)
+	nest.local.install($export[jar][Path])
+}

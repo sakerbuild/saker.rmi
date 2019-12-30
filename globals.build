@@ -1,0 +1,7 @@
+global(VERSION_saker.rmi) = "0.8.0"
+global(COMPILER_OPTIONS) = [
+	{
+		Identifier: main-testing,
+		SourceDirectories: path(test/testaccess/)
+	}
+]
