@@ -38,7 +38,11 @@ export(
 			{
 				Directory: res/,
 				Resources: **,
-			}
+			},
+			{
+				Files: "wd:/LICENSE",
+				TargetDirectory: META-INF,
+			},
 		],
 		Manifest: {
 			MainAttributes: {
