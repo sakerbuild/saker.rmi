@@ -3,3 +3,5 @@
 /.saker.build.ideconfigs
 /.saker.project.lock
 /.classpath
+secret/**
+!secret/readme.md

@@ -31,14 +31,26 @@ export(
 		},
 	)
 }
-install(){
-	$export = include(export)
-	nest.local.install($export[sourcesjar][Path])
+exportall(
+	out bundlepaths = [
+		include(export, Path: api/api.build)[jar][Path],
+		include(export, Path: main/main.build)[jar][Path],
+		include(export)[sourcesjar][Path],
+	]
+) {
 }
-installall(){
-	include(install, Path: api/api.build)
-	include(install, Path: main/main.build)
-	include(install)
+install(){
+	nest.local.install(include(exportall)[bundlepaths])
+}
+upload() {
+	$export = include(exportall, Path: saker.build)
+	include(Path: secret/secrets.build)
+	nest.server.upload(
+		Bundles: $export[bundlepaths],
+		APIKey: global(saker.rmi.UPLOAD_API_KEY),
+		APISecret: global(saker.rmi.UPLOAD_API_SECRET),
+		Overwrite: true,
+	)
 }
 test(){
 	# TODO remove lib/saker_testutils.jar dependency
