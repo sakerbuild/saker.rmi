@@ -89,8 +89,9 @@ public class PartiallyFoundInterfaceProxyRMITest extends BaseVariablesRMITestCas
 	}
 
 	@Override
-	protected RMIConnection[] createConnections() throws Exception {
-		RMIOptions options = new RMIOptions().classResolver(new SingleClassLoaderResolver("cl", SUBCLASSLOADER));
+	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
+		RMIOptions options = new RMIOptions().classResolver(new SingleClassLoaderResolver("cl", SUBCLASSLOADER))
+				.maxStreamCount(maxthreads);
 		return RMITestUtil.createPipedConnection(options);
 	}
 

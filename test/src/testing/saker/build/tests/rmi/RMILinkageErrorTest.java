@@ -70,8 +70,8 @@ public class RMILinkageErrorTest extends BaseVariablesRMITestCase {
 
 	}
 
-	private ClassLoaderResolverRegistry clientRegistry = new ClassLoaderResolverRegistry();
-	private ClassLoaderResolverRegistry serverRegistry = new ClassLoaderResolverRegistry();
+	private ClassLoaderResolverRegistry clientRegistry;
+	private ClassLoaderResolverRegistry serverRegistry;
 
 	@Override
 	protected void runVariablesTestImpl() throws Exception {
@@ -93,9 +93,13 @@ public class RMILinkageErrorTest extends BaseVariablesRMITestCase {
 	}
 
 	@Override
-	protected RMIConnection[] createConnections() throws Exception {
+	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
+		clientRegistry = new ClassLoaderResolverRegistry();
+		serverRegistry = new ClassLoaderResolverRegistry();
 		return RMITestUtil.createPipedConnection(
-				new RMIOptions().classResolver(clientRegistry).nullClassLoader(RMIConnection.class.getClassLoader()),
-				new RMIOptions().classResolver(serverRegistry).nullClassLoader(RMIConnection.class.getClassLoader()));
+				new RMIOptions().classResolver(clientRegistry).nullClassLoader(RMIConnection.class.getClassLoader())
+						.maxStreamCount(maxthreads),
+				new RMIOptions().classResolver(serverRegistry).nullClassLoader(RMIConnection.class.getClassLoader())
+						.maxStreamCount(maxthreads));
 	}
 }

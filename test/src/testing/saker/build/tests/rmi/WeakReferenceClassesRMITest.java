@@ -41,7 +41,7 @@ public class WeakReferenceClassesRMITest extends BaseRMITestCase {
 		}
 	}
 
-	private volatile ClassLoader cl = TestUtils.createClassLoaderForClasses(Stub.class, Impl.class);
+	private volatile ClassLoader cl;
 
 	ClassLoader getClassloader() {
 		return cl;
@@ -78,7 +78,8 @@ public class WeakReferenceClassesRMITest extends BaseRMITestCase {
 	}
 
 	@Override
-	protected RMIConnection[] createConnections() throws Exception {
+	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
+		cl = TestUtils.createClassLoaderForClasses(Stub.class, Impl.class);
 		ClassLoaderResolver resolver = new ClassLoaderResolver() {
 			@Override
 			public String getClassLoaderIdentifier(ClassLoader classloader) {
@@ -96,7 +97,7 @@ public class WeakReferenceClassesRMITest extends BaseRMITestCase {
 				return null;
 			}
 		};
-		return RMITestUtil.createPipedConnection(
-				new RMIOptions().classResolver(resolver).nullClassLoader(RMIConnection.class.getClassLoader()));
+		return RMITestUtil.createPipedConnection(new RMIOptions().classResolver(resolver)
+				.nullClassLoader(RMIConnection.class.getClassLoader()).maxStreamCount(maxthreads));
 	}
 }

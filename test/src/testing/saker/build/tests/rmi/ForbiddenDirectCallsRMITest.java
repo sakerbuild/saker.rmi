@@ -53,15 +53,14 @@ public class ForbiddenDirectCallsRMITest extends BaseVariablesRMITestCase {
 		assertException(RMICallForbiddenException.class, () -> clientVariables.invokeRemoteStaticMethod(staticmethod));
 		Stub implvar = (Stub) clientVariables.getRemoteContextVariable(CONTEXT_VAR_NAME);
 		assertException(RMICallForbiddenException.class, () -> RMIVariables.invokeMethod(implvar, staticmethod));
-		assertException(RMICallForbiddenException.class,
-				() -> RMIVariables.invokeRemoteMethod(implvar, staticmethod));
+		assertException(RMICallForbiddenException.class, () -> RMIVariables.invokeRemoteMethod(implvar, staticmethod));
 		System.out.println("ForbiddenDirectCallsRMITest.runVariablesTestImpl() " + implvar.toString());
 		assertEquals(implvar.f(), "f");
 	}
 
 	@Override
-	protected RMIConnection[] createConnections() throws Exception {
-		return RMITestUtil.createPipedConnection(
-				new RMIOptions().classLoader(getClass().getClassLoader()).allowDirectRequests(false));
+	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
+		return RMITestUtil.createPipedConnection(new RMIOptions().classLoader(getClass().getClassLoader())
+				.allowDirectRequests(false).maxStreamCount(maxthreads));
 	}
 }

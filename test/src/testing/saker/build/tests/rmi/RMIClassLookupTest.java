@@ -62,8 +62,8 @@ public class RMIClassLookupTest extends BaseVariablesRMITestCase {
 		}
 	}
 
-	private ClassLoaderResolverRegistry clientRegistry = new ClassLoaderResolverRegistry();
-	private ClassLoaderResolverRegistry serverRegistry = new ClassLoaderResolverRegistry();
+	private ClassLoaderResolverRegistry clientRegistry;
+	private ClassLoaderResolverRegistry serverRegistry;
 
 	@Override
 	protected void runVariablesTestImpl() throws Exception {
@@ -112,24 +112,25 @@ public class RMIClassLookupTest extends BaseVariablesRMITestCase {
 
 		clientRegistry.unregister("subcl", clientsubclresolver);
 		serverRegistry.unregister("subcl", serversubclresolver);
-
-		//after unregistering the sub classloader, only classes which have already been referenced should be available
-		//therefore Impl2 succeeds, but ImplSub not
-		{
-			Object s = clientVariables.newRemoteInstance(clientsubcl.loadClass(Impl2.class.getName()));
-			Method m = s.getClass().getMethod("f", String.class);
-			assertEquals(m.invoke(s, "x"), "x2");
-			assertEquals(Impl2.callCount, 0);
-
-			assertException(RMICallFailedException.class,
-					() -> clientVariables.newRemoteInstance(clientsubcl.loadClass(ImplSub.class.getName())));
-		}
+		
+		//no classes should be found from unregistered resolvers
+		assertException(RMICallFailedException.class,
+				() -> clientVariables.newRemoteInstance(clientsubcl.loadClass(Impl2.class.getName())));
+		assertException(RMICallFailedException.class,
+				() -> clientVariables.newRemoteInstance(clientsubcl.loadClass(ImplSub.class.getName())));
 	}
 
 	@Override
-	protected RMIConnection[] createConnections() throws Exception {
-		return RMITestUtil.createPipedConnection(
-				new RMIOptions().classResolver(clientRegistry).nullClassLoader(RMIConnection.class.getClassLoader()),
-				new RMIOptions().classResolver(serverRegistry).nullClassLoader(RMIConnection.class.getClassLoader()));
+	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
+		clientRegistry = new ClassLoaderResolverRegistry();
+		serverRegistry = new ClassLoaderResolverRegistry();
+		Impl.callCount = 0;
+
+		RMIOptions firstopt = new RMIOptions().classResolver(clientRegistry)
+				.nullClassLoader(RMIConnection.class.getClassLoader());
+		RMIOptions secondopt = new RMIOptions().classResolver(serverRegistry)
+				.nullClassLoader(RMIConnection.class.getClassLoader());
+		firstopt.maxStreamCount(maxthreads);
+		return RMITestUtil.createPipedConnection(firstopt, secondopt);
 	}
 }

@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListMap;
@@ -678,6 +679,17 @@ public final class RMIConnection implements AutoCloseable {
 			return nullClassLoader;
 		}
 		return classLoaderResolver.getClassLoaderForIdentifier(id);
+	}
+
+	Optional<ClassLoader> getClassLoaderByIdOptional(String id) {
+		if (id == null) {
+			return Optional.ofNullable(nullClassLoader);
+		}
+		ClassLoader found = classLoaderResolver.getClassLoaderForIdentifier(id);
+		if (found == null) {
+			return null;
+		}
+		return Optional.ofNullable(found);
 	}
 
 	ClassLoader getClassLoaderByIdOrThrow(String id) throws ClassLoaderNotFoundIOException {

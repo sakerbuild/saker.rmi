@@ -166,14 +166,14 @@ public class TransferFailureExceptionsRMITest extends BaseVariablesRMITestCase {
 	}
 
 	@Override
-	protected RMIConnection[] createConnections() throws Exception {
+	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
 		//set the proper transfer properties for the method, as the annotation classes will not be available for the classes, therefore they are not visible
 		Class<?> stubclass = SUBCLASSLOADER.loadClass(Stub.class.getName());
 		Method m = stubclass.getMethod("f", Object.class);
 		RMITransferProperties.Builder builder = RMITransferProperties.builder();
 		builder.add(MethodTransferProperties.builder(m).parameterWriter(0, RMIObjectWriteHandler.serialize()).build());
-		return RMITestUtil.createPipedConnection(
-				new RMIOptions().classResolver(new SingleClassLoaderResolver("cl", SUBCLASSLOADER))
-						.transferProperties(builder.build()));
+		RMIOptions options = new RMIOptions().classResolver(new SingleClassLoaderResolver("cl", SUBCLASSLOADER))
+				.transferProperties(builder.build()).maxStreamCount(maxthreads);
+		return RMITestUtil.createPipedConnection(options);
 	}
 }
