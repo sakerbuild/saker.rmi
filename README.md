@@ -1,5 +1,7 @@
 # saker.rmi
 
+![Build status](https://img.shields.io/azure-devops/build/sakerbuild/5bb4fa52-aa48-4924-957e-f1b25aeff54e/13/master)
+
 Java RMI (Remote Method Invocation) library implemented from the ground up. It is designed for cooperative processes in mind and allows automatic and transparent usage of object regardless if they're remote or local.
 
 The library is also included in the [saker.build system](https://saker.build) under the `saker.build.thirdparty` package.
