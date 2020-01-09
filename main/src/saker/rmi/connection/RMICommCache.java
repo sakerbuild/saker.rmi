@@ -19,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
-class RMICommCache<S extends ReflectionElementSupplier<?>> {
+class RMICommCache<S extends ReflectionElementSupplier> {
 	private final ConcurrentSkipListMap<Integer, S> readDatas;
 	private final ConcurrentHashMap<S, Integer> readIndices;
 
