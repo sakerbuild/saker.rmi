@@ -538,6 +538,10 @@ final class RMIStream implements Closeable {
 		if (writeExternalizableObject(variables, obj, out)) {
 			return;
 		}
+		if (obj instanceof Throwable) {
+			writeSerializedObject(obj, out);
+			return;
+		}
 		writeNewRemoteObject(variables, obj, out);
 	}
 

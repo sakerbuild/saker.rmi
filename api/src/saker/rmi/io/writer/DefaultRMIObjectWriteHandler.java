@@ -60,6 +60,8 @@ import saker.rmi.io.RMIObjectOutput;
  * The object is not written using {@link ObjectOutputStream}, but the {@link RMIObjectOutput} interface will be used to
  * call {@link Externalizable#writeExternal}. Any {@link ObjectOutput#writeObject} calls will use the default object
  * writing strategy, and {@link Object} target type.</li>
+ * <li>If the object is an instace of {@link Throwable}, it will be attempted to be transferred as a serializable
+ * object. See {@link SerializeRMIObjectWriteHandler}. (Since saker.rmi 0.8.1)</li>
  * <li>As a fallback mechanism, the RMI runtime will write the given object as a remote to the other side. This means
  * that if the actual target type can not accept an interface, then the RMI request will likely fail. This can be
  * considered an undefined behavior and the user should attempt to properly choose the interfaces and instances for RMI
