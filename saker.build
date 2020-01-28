@@ -1,10 +1,4 @@
-global(VERSION_saker.rmi) = "0.8.0"
-global(COMPILER_OPTIONS) = [
-	{
-		Identifier: main-testing,
-		SourceDirectories: path(test/testaccess/)
-	}
-]
+include(Path: globals.build)
 
 static(VERSION_saker.build) = nest.dependency.resolve(
 	saker.build,
