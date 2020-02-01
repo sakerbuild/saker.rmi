@@ -1171,6 +1171,8 @@ public class RMIVariables implements AutoCloseable {
 					.invoke(null, properties);
 		} catch (NoSuchMethodException e) {
 		} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException | SecurityException e) {
+			//none of these should be thrown, as the proxy generation should properly verify the interfaces
+			//as the byte code are generated
 			throw new AssertionError("Failed to initialize proxy class: " + interfaces, e);
 		}
 		try {

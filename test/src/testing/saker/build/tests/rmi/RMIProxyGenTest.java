@@ -140,6 +140,17 @@ public class RMIProxyGenTest extends SakerTestCase {
 		public int f();
 	}
 
+	private static class PrivateClass {
+	}
+
+	public interface PrivateMethodParameter {
+		public void f(PrivateClass pc);
+	}
+
+	public interface PrivateReturnTypeParameter {
+		public PrivateClass f();
+	}
+
 	private DefinerClassLoader classLoader = new DefinerClassLoader();
 	private final AtomicInteger nameCounter = new AtomicInteger();
 
@@ -171,6 +182,9 @@ public class RMIProxyGenTest extends SakerTestCase {
 		//conflicting method configurations are unresolved
 		assertException(RMIProxyCreationFailedException.class, () -> testCreate(setOf(AnnotConflictUnresolved.class)));
 		testCreate(setOf(AnnotConflictResolved.class));
+
+		testCreate(setOf(PrivateMethodParameter.class));
+		testCreate(setOf(PrivateReturnTypeParameter.class));
 	}
 
 	private void testCreate(Set<Class<?>> interfaces) {

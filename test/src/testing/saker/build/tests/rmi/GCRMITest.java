@@ -25,6 +25,7 @@ import testing.saker.SakerTest;
 
 @SakerTest
 public class GCRMITest extends BaseVariablesRMITestCase {
+	//TODO create GC test for remote objects that were written, but the overall method transfer failed.
 	private static final int GC_TIMEOUT_MS = 50;
 
 	public static class SomeRunnable implements Runnable {

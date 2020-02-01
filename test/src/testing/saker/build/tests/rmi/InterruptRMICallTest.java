@@ -25,6 +25,9 @@ public class InterruptRMICallTest extends BaseVariablesRMITestCase {
 	private static final Semaphore INTERRUPT_NONCONSUMING_SEMAPHORE = new Semaphore(1);
 
 	public interface Stub {
+		public default void init() {
+		}
+		
 		public void waitInterrupting() throws InterruptedException;
 
 		public void interruptSetting();
@@ -80,6 +83,11 @@ public class InterruptRMICallTest extends BaseVariablesRMITestCase {
 	@Override
 	protected void runVariablesTestImpl() throws Exception {
 		Stub s = (Stub) clientVariables.newRemoteInstance(Impl.class);
+		//call an init method to preload some RMI classes.
+		//as interrupting the current thread may interfere with the class loading of RMI classes
+		//unexpected NoClassDefFoundErrors could be thrown.
+		s.init();
+		
 		Thread currentthread = Thread.currentThread();
 		currentthread.interrupt();
 		assertException(InterruptedException.class, s::waitInterrupting);
