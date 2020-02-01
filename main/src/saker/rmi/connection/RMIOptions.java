@@ -58,6 +58,7 @@ public final class RMIOptions {
 		this.properties = copy.properties;
 		this.workerThreadGroup = copy.workerThreadGroup;
 		this.maxStreamCount = copy.maxStreamCount;
+		this.allowDirectRequests = copy.allowDirectRequests;
 	}
 
 	/**
