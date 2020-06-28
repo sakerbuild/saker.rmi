@@ -22,9 +22,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.Collection;
 import java.util.Map.Entry;
@@ -118,7 +120,13 @@ public class RMIServer implements AutoCloseable {
 	 */
 	public RMIServer(ServerSocketFactory socketfactory, int port, InetAddress bindaddress) throws IOException {
 		if (socketfactory == null) {
-			this.acceptorSocket = new ServerSocket(port, 0, bindaddress);
+			this.acceptorSocket = ServerSocketChannel.open().socket();
+			try {
+				this.acceptorSocket.bind(new InetSocketAddress(bindaddress, port));
+			} catch (Exception e) {
+				IOUtils.addExc(e, IOUtils.closeExc(this.acceptorSocket));
+				throw e;
+			}
 		} else {
 			this.acceptorSocket = socketfactory.createServerSocket(port, 0, bindaddress);
 		}
