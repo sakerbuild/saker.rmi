@@ -22,12 +22,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
-import java.nio.channels.ServerSocketChannel;
-import java.nio.channels.SocketChannel;
 import java.util.Collection;
 import java.util.Map.Entry;
 import java.util.Objects;
@@ -120,13 +117,7 @@ public class RMIServer implements AutoCloseable {
 	 */
 	public RMIServer(ServerSocketFactory socketfactory, int port, InetAddress bindaddress) throws IOException {
 		if (socketfactory == null) {
-			this.acceptorSocket = ServerSocketChannel.open().socket();
-			try {
-				this.acceptorSocket.bind(new InetSocketAddress(bindaddress, port));
-			} catch (Exception e) {
-				IOUtils.addExc(e, IOUtils.closeExc(this.acceptorSocket));
-				throw e;
-			}
+			this.acceptorSocket = new ServerSocket(port, 0, bindaddress);
 		} else {
 			this.acceptorSocket = socketfactory.createServerSocket(port, 0, bindaddress);
 		}
@@ -151,7 +142,7 @@ public class RMIServer implements AutoCloseable {
 	 * If this instance was constructed with 0 as port number, this will return the actual allocated port nonetheless.
 	 * 
 	 * @return The port number.
-	 * @see ServerSocket#getLocalPort()
+	 * @see ServerSocket#getLocalPort();
 	 */
 	public final int getPort() {
 		return port;
@@ -327,7 +318,7 @@ public class RMIServer implements AutoCloseable {
 			throws IOException, RMIShutdownRequestDeniedException, NullPointerException {
 		Objects.requireNonNull(address, "address");
 		int connectiontimeoutms = DEFAULT_CONNECTION_TIMEOUT_MS;
-		try (Socket s = socketfactory == null ? SocketChannel.open().socket() : socketfactory.createSocket()) {
+		try (Socket s = socketfactory == null ? new Socket() : socketfactory.createSocket()) {
 			s.connect(address, connectiontimeoutms);
 
 			OutputStream socketos = s.getOutputStream();
@@ -399,7 +390,7 @@ public class RMIServer implements AutoCloseable {
 	public static boolean pingServer(SocketFactory socketfactory, SocketAddress address) throws NullPointerException {
 		Objects.requireNonNull(address, "address");
 		int connectiontimeoutms = DEFAULT_CONNECTION_TIMEOUT_MS;
-		try (Socket s = socketfactory == null ? SocketChannel.open().socket() : socketfactory.createSocket()) {
+		try (Socket s = socketfactory == null ? new Socket() : socketfactory.createSocket()) {
 			s.connect(address, connectiontimeoutms);
 
 			OutputStream socketos = s.getOutputStream();
@@ -593,7 +584,7 @@ public class RMIServer implements AutoCloseable {
 			@SuppressWarnings("resource")
 			Socket s;
 			if (socketfactory == null) {
-				s = SocketChannel.open().socket();
+				s = new Socket();
 			} else {
 				s = socketfactory.createSocket();
 			}
@@ -881,7 +872,7 @@ public class RMIServer implements AutoCloseable {
 			try {
 				Socket sock;
 				if (socketfactory == null) {
-					sock = SocketChannel.open().socket();
+					sock = new Socket();
 				} else {
 					sock = socketfactory.createSocket();
 				}
