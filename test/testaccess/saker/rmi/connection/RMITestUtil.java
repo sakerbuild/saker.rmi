@@ -126,7 +126,7 @@ public class RMITestUtil {
 	}
 
 	public static byte[] testProxyCreation(String name, Set<Class<?>> interfaces) {
-		return ProxyGenerator.generateProxy(name, interfaces, null, AutoCreatingRMITransferProperties.create());
+		return ProxyGenerator.generateProxy(name, interfaces, null, AutoCreatingRMITransferProperties.create(), false);
 	}
 
 	public static void testProxyCreation(Class<?> c) {

@@ -160,6 +160,8 @@ public final class RMIConnection implements AutoCloseable {
 	private ConcurrentSkipListMap<Integer, RequestThreadState> requestThreadStates = new ConcurrentSkipListMap<>();
 	private short protocolVersion;
 
+	private RMIStatistics statistics;
+
 	RMIConnection(RMIOptions options, short protocolversion) {
 		this.protocolVersion = protocolversion;
 		this.allowDirectRequests = options.allowDirectRequests;
@@ -176,11 +178,17 @@ public final class RMIConnection implements AutoCloseable {
 		this.nullClassLoader = defaultedNullClassLoader(options.nullClassLoader);
 		this.maxStreamCount = Math.max(options.getDefaultedMaxStreamCount(), 1);
 		this.taskPool = createWorkPool();
+		if (options.collectStatistics) {
+			this.statistics = new RMIStatistics();
+		}
 	}
 
 	RMIConnection(RMIOptions options, StreamPair streams, short protocolversion,
 			IOFunction<Collection<? super AutoCloseable>, StreamPair> streamconnector) throws IOException {
 		this.allowDirectRequests = options.allowDirectRequests;
+		if (options.collectStatistics) {
+			this.statistics = new RMIStatistics();
+		}
 		StreamPair streamstoclose = streams;
 		RMIStream streamclose = null;
 		IOException exc = null;
@@ -218,6 +226,22 @@ public final class RMIConnection implements AutoCloseable {
 			exc = IOUtils.closeExc(exc, streamclose);
 			IOUtils.throwExc(exc);
 		}
+	}
+
+	/**
+	 * Gets the RMI statistics that were collected.
+	 * <p>
+	 * This method returns non-<code>null</code> if and only if {@link RMIOptions#collectStatistics(boolean)} was set to
+	 * <code>true</code>.
+	 * <p>
+	 * If the connection is still alive (i.e. not closed) then the returned statistics object may be modified if RMI
+	 * calls are performed concurrently.
+	 * 
+	 * @return The statistics or <code>null</code> if none were collected.
+	 * @since saker.rmi 0.8.2
+	 */
+	public RMIStatistics getStatistics() {
+		return statistics;
 	}
 
 	/**
@@ -701,6 +725,14 @@ public final class RMIConnection implements AutoCloseable {
 			throw new ClassLoaderNotFoundIOException(id);
 		}
 		return found;
+	}
+
+	boolean isStatisticsCollected() {
+		return statistics != null;
+	}
+	
+	RMIStatistics getCollectingStatistics() {
+		return statistics;
 	}
 
 	static final class OnlyClassLoaderResolver implements ClassLoaderResolver {
