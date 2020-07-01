@@ -52,7 +52,9 @@ upload() {
 		Overwrite: true,
 	)
 }
-test(){
+test(
+	in jdk = saker.java.sdk(),
+){
 	# TODO remove lib/saker_testutils.jar dependency
 	$compile = include(compile, Path: main/main.build, testing: true)
 	$testcompile = saker.java.compile(
@@ -91,6 +93,42 @@ test(){
 		MaxJVMCount: 1,
 		FailFast: true,
 		AbortOnFail: true,
+		JavaSDK: $jdk,
 		Verbose: true,
+	)
+}
+testjava8(){
+	test(
+		jdk: saker.java.sdk(8),
+	)
+}
+testjava9(){
+	test(
+		jdk: saker.java.sdk(9),
+	)
+}
+testjava10(){
+	test(
+		jdk: saker.java.sdk(10),
+	)
+}
+testjava11(){
+	test(
+		jdk: saker.java.sdk(11),
+	)
+}
+testjava12(){
+	test(
+		jdk: saker.java.sdk(12),
+	)
+}
+testjava13(){
+	test(
+		jdk: saker.java.sdk(13),
+	)
+}
+testjava14(){
+	test(
+		jdk: saker.java.sdk(14),
 	)
 }
