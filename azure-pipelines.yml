@@ -28,7 +28,7 @@ steps:
   displayName: 'Download JDK setup script'
 - script: bash /tmp/azure_ubuntu_jdksetup_variables.sh $(J_JAVA_MAJOR)
   displayName: 'Setup JDKs'
-- script: $(JAVA_HOME_$(J_JAVA_MAJOR)_X64) -jar saker.build.jar -bd build -trace pwd://build/build_test.trace test
+- script: $(JAVA_HOME_$(J_JAVA_MAJOR)_X64)/bin/java -jar saker.build.jar -bd build -trace pwd://build/build_test.trace test
   displayName: 'Test'
 - task: PublishBuildArtifacts@1
   condition: always()
@@ -36,7 +36,7 @@ steps:
   inputs:
     pathtoPublish: build/build_test.trace
     artifactName: 'test_trace_$(J_JAVA_MAJOR)'
-- script: $(JAVA_HOME_$(J_JAVA_MAJOR)_X64) -jar saker.build.jar -trace pwd://build/build_export.trace export
+- script: $(JAVA_HOME_$(J_JAVA_MAJOR)_X64)/bin/java -jar saker.build.jar -trace pwd://build/build_export.trace export
   displayName: 'Export'
 - task: PublishBuildArtifacts@1
   condition: always()
