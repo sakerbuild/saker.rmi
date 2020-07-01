@@ -212,6 +212,9 @@ public final class RMIStatistics {
 	}
 
 	private void dumpSummaryImpl(Appendable out, TimeUnit timeunit) throws IOException {
+		if (methodStats.isEmpty()) {
+			return;
+		}
 		String ls = System.lineSeparator();
 		Map<Method, Entry<Long, Long>> callstats = new HashMap<>();
 		for (MethodStatistics ms : methodStats) {
@@ -300,19 +303,52 @@ public final class RMIStatistics {
 				}
 			}
 		}
+		StringBuilder sb = new StringBuilder();
 		for (Entry<Method, Entry<Long, Long>> entry : statlist) {
 			Long count = entry.getValue().getValue();
 			Long totalduration = entry.getValue().getKey();
 			long durationval = totalduration / count;
 			String durstr = Long.toString(timeunit.convert(durationval, TimeUnit.NANOSECONDS));
 
-			out.append(entry.getKey().toString());
-			out.append(": \t");
-			out.append(durstr);
-			out.append(metric);
-			out.append(" / ");
-			out.append(count.toString());
-			out.append(ls);
+			sb.setLength(0);
+
+			Method m = entry.getKey();
+			Class<?>[] ptypes = m.getParameterTypes();
+			sb.append(m.getDeclaringClass().getName());
+			sb.append('\t');
+			sb.append(m.getName());
+			if (ptypes.length == 0) {
+				sb.append("()");
+			} else {
+				sb.append("(");
+				for (int i = 0;;) {
+					Class<?> t = ptypes[i];
+					appendTypeName(sb, t);
+					if (++i < ptypes.length) {
+						sb.append(',');
+					} else {
+						break;
+					}
+				}
+				sb.append(")");
+			}
+			sb.append('\t');
+			sb.append(durstr);
+			sb.append(metric);
+			sb.append(" / ");
+			sb.append(count.toString());
+			sb.append(ls);
+
+			out.append(sb);
+		}
+	}
+
+	private void appendTypeName(StringBuilder sb, Class<?> t) {
+		if (t.isArray()) {
+			appendTypeName(sb, t.getComponentType());
+			sb.append("[]");
+		} else {
+			sb.append(t.getName());
 		}
 	}
 
