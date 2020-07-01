@@ -8,18 +8,25 @@ strategy:
   matrix:
     Java8:
       J_JAVA_MAJOR: '8'
+      JAVA_EXEC_HOME: $(JAVA_HOME_8_X64)
     Java9:
       J_JAVA_MAJOR: '9'
+      JAVA_EXEC_HOME: $(JAVA_HOME_9_X64)
     Java10:
       J_JAVA_MAJOR: '10'
+      JAVA_EXEC_HOME: $(JAVA_HOME_10_X64)
     Java11:
       J_JAVA_MAJOR: '11'
+      JAVA_EXEC_HOME: $(JAVA_HOME_11_X64)
     Java12:
       J_JAVA_MAJOR: '12'
+      JAVA_EXEC_HOME: $(JAVA_HOME_12_X64)
     Java13:
       J_JAVA_MAJOR: '13'
+      JAVA_EXEC_HOME: $(JAVA_HOME_13_X64)
     Java14:
       J_JAVA_MAJOR: '14'
+      JAVA_EXEC_HOME: $(JAVA_HOME_14_X64)
 
 steps:
 - script: curl -L https://api.nest.saker.build/bundle/download/saker.build-v$(curl -s https://mirror.nest.saker.build/badges/saker.build/latest.txt) -o saker.build.jar
@@ -28,7 +35,7 @@ steps:
   displayName: 'Download JDK setup script'
 - script: bash /tmp/azure_ubuntu_jdksetup_variables.sh $(J_JAVA_MAJOR)
   displayName: 'Setup JDKs'
-- script: $(JAVA_HOME_$(J_JAVA_MAJOR)_X64)/bin/java -jar saker.build.jar -bd build -trace pwd://build/build_test.trace test
+- script: $(JAVA_EXEC_HOME)/bin/java -jar saker.build.jar -bd build -trace pwd://build/build_test.trace test
   displayName: 'Test'
 - task: PublishBuildArtifacts@1
   condition: always()
@@ -36,7 +43,7 @@ steps:
   inputs:
     pathtoPublish: build/build_test.trace
     artifactName: 'test_trace_$(J_JAVA_MAJOR)'
-- script: $(JAVA_HOME_$(J_JAVA_MAJOR)_X64)/bin/java -jar saker.build.jar -trace pwd://build/build_export.trace export
+- script: $(JAVA_EXEC_HOME)/bin/java -jar saker.build.jar -bd build -trace pwd://build/build_export.trace export
   displayName: 'Export'
 - task: PublishBuildArtifacts@1
   condition: always()
