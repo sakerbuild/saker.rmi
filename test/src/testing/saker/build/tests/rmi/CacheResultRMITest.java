@@ -16,13 +16,21 @@
 package testing.saker.build.tests.rmi;
 
 import saker.rmi.annot.invoke.RMICacheResult;
+import saker.util.thread.ThreadUtils;
 import testing.saker.SakerTest;
+import testing.saker.build.tests.ExecutionOrderer;
 
 @SakerTest
 public class CacheResultRMITest extends BaseVariablesRMITestCase {
 	private static int method1CallCount = 0;
 	private static int methodParamsCallCount = 0;
 	private static int methodLongCallCount = 0;
+
+	private static int methodFailingCallCount = 0;
+	private static int methodOrderedCallCount = 0;
+	private static int methodRecursiveCallCount = 0;
+
+	private static ExecutionOrderer orderer;
 
 	public interface Stub {
 		@RMICacheResult
@@ -34,6 +42,15 @@ public class CacheResultRMITest extends BaseVariablesRMITestCase {
 		//to test if primitives can be cached
 		@RMICacheResult
 		public long l();
+
+		@RMICacheResult
+		public int failing();
+
+		@RMICacheResult
+		public int ordered();
+
+		@RMICacheResult
+		public int recursive();
 	}
 
 	public static class Impl implements Stub {
@@ -56,6 +73,33 @@ public class CacheResultRMITest extends BaseVariablesRMITestCase {
 			return 99;
 		}
 
+		@Override
+		public int failing() {
+			++methodFailingCallCount;
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public int ordered() {
+			++methodOrderedCallCount;
+			try {
+				orderer.enter("in");
+				orderer.enter("got");
+				Thread.sleep(500);
+			} catch (InterruptedException e) {
+				fail(e);
+			}
+			return 0;
+		}
+
+		@Override
+		public int recursive() {
+			if (++methodRecursiveCallCount == 3) {
+				return 10;
+			}
+			return recursive();
+		}
+
 	}
 
 	@Override
@@ -63,6 +107,14 @@ public class CacheResultRMITest extends BaseVariablesRMITestCase {
 		method1CallCount = 0;
 		methodParamsCallCount = 0;
 		methodLongCallCount = 0;
+		methodFailingCallCount = 0;
+		methodOrderedCallCount = 0;
+		methodRecursiveCallCount = 0;
+
+		orderer = new ExecutionOrderer();
+		orderer.addSection("in");
+		orderer.addSection("started");
+		orderer.addSection("got");
 
 		Stub s = (Stub) clientVariables.newRemoteInstance(Impl.class);
 		Object c1res = s.f();
@@ -82,6 +134,29 @@ public class CacheResultRMITest extends BaseVariablesRMITestCase {
 		assertEquals(methodLongCallCount, 1);
 		assertEquals(s.l(), 99L);
 		assertEquals(methodLongCallCount, 1);
+
+		assertException(UnsupportedOperationException.class, () -> {
+			s.failing();
+		});
+		assertEquals(methodFailingCallCount, 1);
+		assertException(UnsupportedOperationException.class, s::failing);
+		assertEquals(methodFailingCallCount, 2);
+
+		Thread dt = ThreadUtils.startDaemonThread(() -> {
+			try {
+				orderer.enter("started");
+				s.ordered();
+			} catch (InterruptedException e) {
+				fail(e);
+			}
+
+		});
+		s.ordered();
+		dt.join();
+		assertEquals(methodOrderedCallCount, 1);
+
+		s.recursive();
+		assertEquals(methodRecursiveCallCount, 3);
 	}
 
 }

@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import saker.rmi.connection.RequestHandler.Request;
@@ -243,7 +244,10 @@ final class RMIStream implements Closeable {
 
 	protected volatile boolean streamCloseWritten = false;
 
-	protected final Object outLock = new Object();
+	/**
+	 * A non-reentrant lock for accessing the output stream.
+	 */
+	protected final Semaphore outSemaphore = new Semaphore(1);
 
 	private final RMICommCache<ClassReflectionElementSupplier> commClasses;
 	private final RMICommCache<ClassLoaderReflectionElementSupplier> commClassLoaders;
@@ -271,12 +275,15 @@ final class RMIStream implements Closeable {
 			try {
 				checkClosed();
 
-				synchronized (outLock) {
+				outSemaphore.acquireUninterruptibly();
+				try {
 					//XXX we might remove checkClosed calls from the command writers
 					getBuffer().writeTo(blockOut);
 					blockOut.nextBlock();
 					//need to flush, as the underlying output stream might be buffered, or anything
 					blockOut.flush();
+				} finally {
+					outSemaphore.release();
 				}
 			} catch (IOException e) {
 				streamError(e);
@@ -319,7 +326,8 @@ final class RMIStream implements Closeable {
 	@Override
 	public void close() {
 		if (!streamCloseWritten) {
-			synchronized (outLock) {
+			outSemaphore.acquireUninterruptibly();
+			try {
 				if (!streamCloseWritten) {
 					streamCloseWritten = true;
 					try {
@@ -332,6 +340,8 @@ final class RMIStream implements Closeable {
 					}
 					IOUtils.closePrint(blockOut);
 				}
+			} finally {
+				outSemaphore.release();
 			}
 		}
 	}
@@ -2183,8 +2193,11 @@ final class RMIStream implements Closeable {
 			//dont care previous exit code, just set it
 			streamError(e);
 		}
-		synchronized (outLock) {
+		outSemaphore.acquireUninterruptibly();
+		try {
 			IOUtils.closeExc(blockIn);
+		} finally {
+			outSemaphore.release();
 		}
 		connection.removeStream(this);
 	}

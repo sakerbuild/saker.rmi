@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import saker.rmi.connection.RMIStream.ClassLoaderNotFoundIOException;
 import saker.rmi.exception.RMIIOFailureException;
 import saker.rmi.exception.RMIRuntimeException;
+import saker.util.ArrayUtils;
 import saker.util.ConcurrentPrependAccumulator;
 import saker.util.ObjectUtils;
 import saker.util.classloader.ClassLoaderResolver;
@@ -425,11 +426,13 @@ public final class RMIConnection implements AutoCloseable {
 		}
 		synchronized (errorListeners) {
 			if (ioErrorException != null) {
-				listener.onIOError(ioErrorException);
+				//listener to be called outside of lock
+			} else {
+				errorListeners.add(listener);
 				return;
 			}
-			errorListeners.add(listener);
 		}
+		listener.onIOError(ioErrorException);
 	}
 
 	/**
@@ -474,13 +477,15 @@ public final class RMIConnection implements AutoCloseable {
 		}
 		synchronized (stateModifyLock) {
 			if (aborting && this.variablesByLocalId.isEmpty()) {
-				listener.onConnectionClosed();
+				//listener to be called outside of lock
+			} else {
+				synchronized (closeListeners) {
+					closeListeners.add(listener);
+				}
 				return;
 			}
-			synchronized (closeListeners) {
-				closeListeners.add(listener);
-			}
 		}
+		listener.onConnectionClosed();
 	}
 
 	/**
@@ -652,17 +657,18 @@ public final class RMIConnection implements AutoCloseable {
 		int identifier = variables.getLocalIdentifier();
 		synchronized (stateModifyLock) {
 			boolean removed = this.variablesByLocalId.remove(identifier, variables);
-			if (removed) {
-				if (variables instanceof NamedRMIVariables) {
-					this.variablesByNames.remove(((NamedRMIVariables) variables).getName(), variables);
-				}
-
-				try {
-					getStream().writeVariablesClosed(variables);
-				} catch (IOException | RMIRuntimeException e) {
-				}
-				closeIfAbortingAndNoVariables();
+			if (!removed) {
+				return;
 			}
+			if (variables instanceof NamedRMIVariables) {
+				this.variablesByNames.remove(((NamedRMIVariables) variables).getName(), variables);
+			}
+
+			try {
+				getStreamStateModifyLocked().writeVariablesClosed(variables);
+			} catch (IOException | RMIRuntimeException e) {
+			}
+			closeIfAbortingAndNoVariables();
 		}
 	}
 
@@ -736,11 +742,15 @@ public final class RMIConnection implements AutoCloseable {
 	RMIStream getStream() {
 		checkClosed();
 		synchronized (stateModifyLock) {
-			if (allStreams.isEmpty()) {
-				throw new RMIIOFailureException("No stream found.");
-			}
-			return allStreams.get(ARFU_streamRoundRobin.getAndIncrement(this) % allStreams.size());
+			return getStreamStateModifyLocked();
 		}
+	}
+
+	private RMIStream getStreamStateModifyLocked() {
+		if (allStreams.isEmpty()) {
+			throw new RMIIOFailureException("No stream found.");
+		}
+		return allStreams.get(ARFU_streamRoundRobin.getAndIncrement(this) % allStreams.size());
 	}
 
 	void clientClose() {
@@ -960,8 +970,20 @@ public final class RMIConnection implements AutoCloseable {
 			copy = new ArrayList<>(errorListeners);
 			errorListeners.clear();
 		}
+		Throwable[] listenerexceptions = ObjectUtils.EMPTY_THROWABLE_ARRAY;
 		for (IOErrorListener l : copy) {
-			l.onIOError(exc);
+			try {
+				l.onIOError(exc);
+			} catch (Exception e) {
+				listenerexceptions = ArrayUtils.appended(listenerexceptions, e);
+			}
+		}
+		if (listenerexceptions.length > 0) {
+			RMIRuntimeException ex = new RMIRuntimeException("IO error listeners caused an exception.");
+			for (Throwable t : listenerexceptions) {
+				ex.addSuppressed(t);
+			}
+			throw ex;
 		}
 	}
 
@@ -1030,8 +1052,20 @@ public final class RMIConnection implements AutoCloseable {
 			copy = new ArrayList<>(closeListeners);
 			closeListeners.clear();
 		}
+		Throwable[] listenerexceptions = ObjectUtils.EMPTY_THROWABLE_ARRAY;
 		for (CloseListener l : copy) {
-			l.onConnectionClosed();
+			try {
+				l.onConnectionClosed();
+			} catch (Exception e) {
+				listenerexceptions = ArrayUtils.appended(listenerexceptions, e);
+			}
+		}
+		if (listenerexceptions.length > 0) {
+			RMIRuntimeException ex = new RMIRuntimeException("Close listeners caused an exception.");
+			for (Throwable t : listenerexceptions) {
+				ex.addSuppressed(t);
+			}
+			throw ex;
 		}
 	}
 
