@@ -861,7 +861,7 @@ final class RMIStream implements Closeable {
 		out.writeShort(OBJECT_SERIALIZED);
 		try (ObjectOutputStream oos = new RMISerializeObjectOutputStream(out, connection)) {
 			oos.writeObject(obj);
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			throw new RMIObjectTransferFailureException(
 					"Failed to transfer object as serializable. (" + obj.getClass() + ":" + obj + ")", e);
 		}
@@ -872,7 +872,7 @@ final class RMIStream implements Closeable {
 		try (ObjectInputStream ois = new RMISerializeObjectInputStream(StreamUtils.closeProtectedInputStream(in),
 				connection)) {
 			return ois.readObject();
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			throw new RMIObjectTransferFailureException("Failed to read serializable object.", e);
 		}
 	}
@@ -918,7 +918,7 @@ final class RMIStream implements Closeable {
 			out.writeInt(0);
 			try {
 				((Externalizable) obj).writeExternal(new RMIObjectOutputImpl(variables, this, out));
-			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 				throw new RMIObjectTransferFailureException(
 						"Failed to transfer object as externalizable. (" + obj.getClass() + ":" + obj + ")", e);
 			}
@@ -957,7 +957,7 @@ final class RMIStream implements Closeable {
 							+ " didn't read input fully. (Remaining " + avail + " bytes)");
 				}
 				in.skipBytes(bytecount);
-			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 				throw new RMIObjectTransferFailureException("Failed to read externalizable. (" + clazz + ")", e);
 			}
 			return instance;
@@ -1667,7 +1667,7 @@ final class RMIStream implements Closeable {
 		} catch (IOException e) {
 			requestHandler.addResponse(reqid,
 					new NewVariablesFailedResponse(new RMIIOFailureException("Failed to read response.", e)));
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			requestHandler.addResponse(reqid,
 					new NewVariablesFailedResponse(new RMICallFailedException("Failed to read response.", e)));
 		}
@@ -1688,7 +1688,7 @@ final class RMIStream implements Closeable {
 		} catch (IOException e) {
 			requestHandler.addResponse(reqid, new MethodCallFailedResponse(interrupted, interruptreqcount,
 					new RMIIOFailureException("Failed to read new instance result.", e)));
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			requestHandler.addResponse(reqid, new MethodCallFailedResponse(interrupted, interruptreqcount,
 					new RMICallFailedException("Failed to read new instance result.", e)));
 		}
@@ -1704,7 +1704,7 @@ final class RMIStream implements Closeable {
 		} catch (IOException e) {
 			requestHandler.addResponse(reqid,
 					new GetContextVariableFailedResponse(new RMIIOFailureException("Failed to read response.", e)));
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			requestHandler.addResponse(reqid,
 					new GetContextVariableFailedResponse(new RMICallFailedException("Failed to read response.", e)));
 		}
@@ -1818,7 +1818,7 @@ final class RMIStream implements Closeable {
 			writeCommandNewVariablesResult(reqid, localid);
 		} catch (IOException e) {
 			writeCommandNewVariablesResult(reqid, RMIVariables.NO_OBJECT_ID);
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			writeCommandNewVariablesResult(reqid, RMIVariables.NO_OBJECT_ID);
 		}
 	}
@@ -1846,7 +1846,7 @@ final class RMIStream implements Closeable {
 		} catch (IOException e) {
 			requestHandler.addResponse(reqid, new UnknownNewInstanceFailedResponse(interrupted, interruptreqcount,
 					new RMIIOFailureException("Failed to read new instance result.", e)));
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			requestHandler.addResponse(reqid, new UnknownNewInstanceFailedResponse(interrupted, interruptreqcount,
 					new RMICallFailedException("Failed to read new instance result.", e)));
 		}
@@ -1866,7 +1866,7 @@ final class RMIStream implements Closeable {
 			requestHandler.addResponse(reqid, new NewInstanceFailedResponse(interrupted, interruptreqcount, exc));
 		} catch (RMIRuntimeException e) {
 			requestHandler.addResponse(reqid, new UnknownNewInstanceFailedResponse(interrupted, interruptreqcount, e));
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			requestHandler.addResponse(reqid, new UnknownNewInstanceFailedResponse(interrupted, interruptreqcount,
 					new RMICallFailedException("Failed to read remote exception.", e)));
 		}
@@ -1886,7 +1886,7 @@ final class RMIStream implements Closeable {
 			requestHandler.addResponse(reqid, new MethodCallFailedResponse(interrupted, interruptreqcount, exc));
 		} catch (RMIRuntimeException e) {
 			requestHandler.addResponse(reqid, new MethodCallFailedResponse(interrupted, interruptreqcount, e));
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			requestHandler.addResponse(reqid, new MethodCallFailedResponse(interrupted, interruptreqcount,
 					new RMICallFailedException("Failed to read remote exception.", e)));
 		}
@@ -1915,7 +1915,7 @@ final class RMIStream implements Closeable {
 			variables = readVariablesValidate(in);
 			constructor = readConstructor(in);
 			args = readMethodParameters(variables, in);
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			writeCommandExceptionResult(COMMAND_NEWINSTANCERESULT_FAIL, reqid, e, false, 0);
 			return;
 		}
@@ -1936,7 +1936,7 @@ final class RMIStream implements Closeable {
 
 			requestHandler.addResponse(dispatchid,
 					new NewInstanceRedispatchResponse(variables, reqid, constructor, args));
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			writeCommandExceptionResult(COMMAND_NEWINSTANCERESULT_FAIL, reqid, e, false, 0);
 		}
 	}
@@ -1966,7 +1966,7 @@ final class RMIStream implements Closeable {
 				argclassnames[i] = in.readUTF();
 				args[i] = readObject(variables, in);
 			}
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			writeCommandExceptionResult(COMMAND_UNKNOWN_NEWINSTANCE_RESULT, reqid, e, false, 0);
 			return;
 		}
@@ -1998,7 +1998,7 @@ final class RMIStream implements Closeable {
 
 			requestHandler.addResponse(dispatchid, new UnknownClassNewInstanceRedispatchResponse(classname, args, reqid,
 					variables, cl, argclassnames));
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			writeCommandExceptionResult(COMMAND_UNKNOWN_NEWINSTANCE_RESULT, reqid, e, false, 0);
 		}
 	}
@@ -2030,7 +2030,7 @@ final class RMIStream implements Closeable {
 			} finally {
 				variables.removeOngoingRequest();
 			}
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			//XXX should notify the user somehow
 			return;
 		}
@@ -2060,7 +2060,7 @@ final class RMIStream implements Closeable {
 
 			transfermethod = variables.getProperties().getExecutableProperties(method);
 			args = readMethodParameters(variables, in);
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			writeCommandExceptionResult(COMMAND_METHODRESULT_FAIL, reqid, e, false, 0);
 			return;
 		}
@@ -2091,7 +2091,7 @@ final class RMIStream implements Closeable {
 
 			requestHandler.addResponse(dispatchid,
 					new MethodCallRedispatchResponse(reqid, invokeobject, transfermethod, variables, args));
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			writeCommandExceptionResult(COMMAND_METHODRESULT_FAIL, reqid, e, false, 0);
 		}
 	}
@@ -2119,7 +2119,7 @@ final class RMIStream implements Closeable {
 		} catch (IOException e) {
 			requestHandler.addResponse(reqid, new MethodCallFailedResponse(interrupted, interruptreqcount,
 					new RMIIOFailureException("Failed to read method result.", e)));
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			requestHandler.addResponse(reqid, new MethodCallFailedResponse(interrupted, interruptreqcount,
 					new RMICallFailedException("Failed to read method result.", e)));
 		}
@@ -2258,7 +2258,7 @@ final class RMIStream implements Closeable {
 				} finally {
 					interruptreqcount = connection.removeRequestThread(reqid);
 				}
-			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 				writeCommandExceptionResult(COMMAND_UNKNOWN_NEWINSTANCE_RESULT, reqid, e, Thread.interrupted(),
 						interruptreqcount);
 				return;
@@ -2305,7 +2305,7 @@ final class RMIStream implements Closeable {
 				} finally {
 					interruptreqcount = connection.removeRequestThread(reqid);
 				}
-			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 				writeCommandExceptionResult(COMMAND_NEWINSTANCERESULT_FAIL, reqid, e, Thread.interrupted(),
 						interruptreqcount);
 				return;
@@ -2330,7 +2330,7 @@ final class RMIStream implements Closeable {
 				} finally {
 					interruptreqcount = connection.removeRequestThread(reqid);
 				}
-			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 				writeCommandExceptionResult(COMMAND_METHODRESULT_FAIL, reqid, e, Thread.interrupted(),
 						interruptreqcount);
 				return;
@@ -2696,7 +2696,7 @@ final class RMIStream implements Closeable {
 		try (ObjectInputStream ois = new ExceptionResolvingRMISerializeObjectInputStream(
 				StreamUtils.closeProtectedInputStream(in), connection)) {
 			exc = (Throwable) ois.readObject();
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
 			throw new RMIObjectTransferFailureException("Failed to read remote exception.", e);
 		}
 		return exc;
