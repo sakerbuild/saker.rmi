@@ -324,25 +324,42 @@ final class RMIStream implements Closeable {
 	}
 
 	@Override
-	public void close() {
-		if (!streamCloseWritten) {
-			outSemaphore.acquireUninterruptibly();
-			try {
-				if (!streamCloseWritten) {
-					streamCloseWritten = true;
-					try {
-						byte[] buf = { (COMMAND_STREAM_CLOSED >>> 8), COMMAND_STREAM_CLOSED };
-						blockOut.write(buf);
-						blockOut.nextBlock();
-						blockOut.flush();
-					} catch (IOException e) {
-						//dont care, it might be closed already
-					}
-					IOUtils.closePrint(blockOut);
-				}
-			} finally {
-				outSemaphore.release();
-			}
+	public void close() throws IOException {
+		writeStreamCloseIfNotWritten();
+	}
+
+	private void writeStreamCloseIfNotWritten() throws IOException {
+		if (streamCloseWritten) {
+			return;
+		}
+		outSemaphore.acquireUninterruptibly();
+		try {
+			writeStreamCloseIfNotWrittenLocked();
+		} finally {
+			outSemaphore.release();
+		}
+	}
+
+	private void writeStreamCloseIfNotWrittenLocked() throws IOException {
+		if (streamCloseWritten) {
+			return;
+		}
+		streamCloseWritten = true;
+		IOException writeexc = null;
+		try {
+			byte[] buf = { (COMMAND_STREAM_CLOSED >>> 8), COMMAND_STREAM_CLOSED };
+			blockOut.write(buf);
+			blockOut.nextBlock();
+			blockOut.flush();
+		} catch (IOException e) {
+			//dont care, it might be closed already
+			//store the write exception to add later to the close exception if any, else it can be ignored
+			writeexc = e;
+		}
+		try {
+			IOUtils.close(blockOut);
+		} catch (IOException e) {
+			throw IOUtils.addExc(e, writeexc);
 		}
 	}
 
@@ -490,10 +507,7 @@ final class RMIStream implements Closeable {
 				break;
 			}
 			default: {
-				//forward compatible, for unknown kind
-				System.err.println("Unrecognized RMI write handler kind: " + kind);
-				writeObjectDefault(variables, obj, targettype, out);
-				break;
+				throw new RMIObjectTransferFailureException("Unrecognized ObjectWriterKind: " + kind);
 			}
 		}
 	}
@@ -2152,13 +2166,34 @@ final class RMIStream implements Closeable {
 	}
 
 	private void runInput() {
+		Exception streamerrorexc = null;
 		reader_try:
 		try {
 			blockIn.nextBlock();
 			StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> fullblock = connection.getCachedByteBuffer();
 			try {
 				DataOutputUnsyncByteArrayOutputStream fullblockbuf = fullblock.get();
-				fullblockbuf.readFrom(blockIn);
+				long readcount;
+				try {
+					readcount = fullblockbuf.readFrom(blockIn);
+				} catch (IOException e) {
+					if (streamCloseWritten) {
+						//the stream is closing. IOException can be ignored
+						//go and close the socket
+						break reader_try;
+					} else {
+						throw e;
+					}
+				}
+				if (readcount == 0) {
+					//no more data from the socket
+					//if we're exiting, this is fine, go ahead with closing
+					//if not, then signal with an EOFException that it is unexpected
+					if (!streamCloseWritten) {
+						throw new EOFException("No more data from stream.");
+					}
+					break reader_try;
+				}
 
 				try (DataInputUnsyncByteArrayInputStream in = new DataInputUnsyncByteArrayInputStream(
 						fullblockbuf.toByteArrayRegion())) {
@@ -2170,36 +2205,55 @@ final class RMIStream implements Closeable {
 					}
 					connection.offerStreamTask(this::runInput);
 					handleCommand(command, in);
-					if (in.available() > 0) {
-						System.err.println("Warning: RMI Stream: Failed to read block fully. (Command: " + command
-								+ ", remaining: " + in.available() + ")");
-					}
-				} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError e) {
-					System.err.println("Error: Command block handling failure: " + e);
+
+					//don't pollute output with warnings or other things
+//					if (in.available() > 0) {
+//						System.err.println("Warning: RMI Stream: Failed to read block fully. (Command: " + command
+//								+ ", remaining: " + in.available() + ")");
+//					}
 				}
+				// no exceptions should escape the command handling. If any escapes, that is an implementation error in the
+				// RMI library and shutdown is expected
 			} finally {
 				connection.releaseCachedByteBuffer(fullblock);
 			}
 			//handling the input block completed successfully,
 			//return and dont close the sockets
 			return;
-		} catch (IOException e) {
-			if (!streamCloseWritten) {
-				System.err.println("RMI stream error: " + e);
-				//XXX should make an option to print these verbose errors with full stacktrace
-			}
-			streamError(e);
 		} catch (Exception e) {
-			//dont care previous exit code, just set it
-			streamError(e);
+			streamerrorexc = e;
 		}
+		if (streamerrorexc != null) {
+			streamError(streamerrorexc);
+			//the stream error exception was handled
+			streamerrorexc = null;
+		}
+
 		outSemaphore.acquireUninterruptibly();
 		try {
-			IOUtils.closeExc(blockIn);
+			try {
+				writeStreamCloseIfNotWrittenLocked();
+			} catch (Exception e) {
+				streamerrorexc = IOUtils.addExc(streamerrorexc, e);
+			}
+			try {
+				IOUtils.close(blockIn);
+			} catch (Exception e) {
+				streamerrorexc = IOUtils.addExc(streamerrorexc, e);
+			}
 		} finally {
 			outSemaphore.release();
 		}
-		connection.removeStream(this);
+		try {
+			connection.removeStream(this);
+		} catch (IOException e) {
+			streamerrorexc = IOUtils.addExc(streamerrorexc, e);
+		}
+
+		//this is the best we can do with any exception
+		if (streamerrorexc != null) {
+			connection.invokeIOErrorListeners(streamerrorexc);
+		}
 	}
 
 	private static ClassLoader getClassLoaderWithId(RMIVariables variables, int localid) {
@@ -2932,8 +2986,8 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	protected final void streamError(Throwable e) {
-		connection.streamError(this, e);
+	protected final void streamError(Throwable exc) {
+		connection.streamError(this, exc);
 	}
 
 	Object newRemoteInstance(RMIVariables variables, ConstructorTransferProperties<?> constructor, Object... arguments)

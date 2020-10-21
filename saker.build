@@ -89,6 +89,7 @@ test(
 		TestInvokerParameters: {
 			TimeoutMillis: 120000,
 		},
+		#ProcessJVMParameters: [ "-agentlib:jdwp=transport=dt_socket,address=localhost:5432,server=y,suspend=y,quiet=y" ],
 		WorkingDirectory: test/resources/,
 		MaxJVMCount: 1,
 		FailFast: true,
@@ -130,5 +131,10 @@ testjava13(){
 testjava14(){
 	test(
 		jdk: saker.java.sdk(14),
+	)
+}
+testjava15(){
+	test(
+		jdk: saker.java.sdk(15),
 	)
 }
