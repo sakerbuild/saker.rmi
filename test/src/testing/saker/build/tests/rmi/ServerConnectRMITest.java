@@ -27,7 +27,6 @@ import saker.rmi.connection.RMIServer;
 import saker.rmi.connection.RMIVariables;
 import testing.saker.SakerTest;
 import testing.saker.SakerTestCase;
-import testing.saker.build.tests.rmi.ssl.SSLSecurityRMITest;
 
 @SakerTest
 public class ServerConnectRMITest extends SakerTestCase {
@@ -89,7 +88,7 @@ public class ServerConnectRMITest extends SakerTestCase {
 
 	private static RMIOptions getOptions() {
 		//use more than 1 max stream count
-		return new RMIOptions().classLoader(SSLSecurityRMITest.class.getClassLoader()).maxStreamCount(10);
+		return new RMIOptions().classLoader(ServerConnectRMITest.class.getClassLoader()).maxStreamCount(10);
 	}
 
 }

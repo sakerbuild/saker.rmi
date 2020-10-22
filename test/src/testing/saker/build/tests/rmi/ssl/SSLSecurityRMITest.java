@@ -63,6 +63,7 @@ import saker.rmi.connection.RMIOptions;
 import saker.rmi.connection.RMIServer;
 import saker.rmi.connection.RMIVariables;
 import saker.util.ObjectUtils;
+import saker.util.StringUtils;
 import saker.util.io.IOUtils;
 import testing.saker.SakerTest;
 import testing.saker.SakerTestCase;
@@ -74,12 +75,12 @@ public class SSLSecurityRMITest extends SakerTestCase {
 	//  based on: https://stackoverflow.com/questions/55854904/javax-net-ssl-sslhandshakeexception-no-available-authentication-scheme
 
 	//key generated using
-	//  keytool -genkey -alias test_alias -keystore keystore -keyalg RSA -storepass testtest
-	//public.cer exported using
-	//  keytool -export -keystore keystore -alias test_alias -file public.cer -storepass testtest
+	//  keytool -genkey -alias test_alias -keystore k1.jks -keyalg RSA -storepass testtest
+	//k1_public.cer exported using
+	//  keytool -export -keystore k1.jks -alias test_alias -file k1_public.cer -storepass testtest
 
-	//  keytool -genkey -alias test_alias -keystore keystore2 -keyalg RSA -storepass testtest
-	//  keytool -export -keystore keystore2 -alias test_alias -file public2.cer -storepass testtest
+	//  keytool -genkey -alias test_alias -keystore k2.jks -keyalg RSA -storepass testtest
+	//  keytool -export -keystore k2.jks -alias test_alias -file k2_public.cer -storepass testtest
 
 	private static final char[] PASSWORD = "testtest".toCharArray();
 
@@ -129,19 +130,19 @@ public class SSLSecurityRMITest extends SakerTestCase {
 	 * The following commands were used (on Windows) to generate and sign the certificates:
 	 * 
 	 * <pre>
-	 * keytool -genkey -alias server_alias -keystore ca.keystore -keyalg RSA -storepass testtest -ext bc:c
-	 * keytool -keystore ca.keystore -alias server_alias -exportcert -rfc -storepass testtest > ca.pem
-	 * keytool -genkey -alias client_alias -keystore client.keystore -keyalg RSA -storepass testtest
-	 * keytool -keystore client.keystore -alias client_alias -exportcert -rfc -storepass testtest > client.pem
-	 * keytool -keystore client.keystore -certreq -alias client_alias -keyalg rsa -file client.csr -storepass testtest
-	 * keytool -gencert -keystore ca.keystore -alias server_alias -storepass testtest -infile client.csr -ext ku:c=dig,keyEncipherment -rfc -outfile signed.pem
+	 * keytool -genkey -alias server_alias -keystore ca.jks -keyalg RSA -ext bc:c -dname "CN=server" -keypass testtest -storepass testtest
+	 * keytool -keystore ca.jks -alias server_alias -exportcert -rfc -storepass testtest > ca.pem
+	 * keytool -genkey -alias client_alias -keystore client.jks -keyalg RSA -dname "CN=client" -storepass testtest -keypass testtest
+	 * keytool -keystore client.jks -alias client_alias -exportcert -rfc -storepass testtest > client.pem
+	 * keytool -keystore client.jks -certreq -alias client_alias -keyalg rsa -file client.csr -storepass testtest
+	 * keytool -gencert -keystore ca.jks -alias server_alias -storepass testtest -infile client.csr -ext ku:c=dig,keyEncipherment -rfc -outfile signed.pem
 	 * type ca.pem signed.pem > signed_chain.pem
-	 * copy client.keystore client_signed.keystore
-	 * keytool -keystore client_signed.keystore -importcert -alias client_alias -file signed_chain.pem -storepass testtest
+	 * copy client.jks client_signed.jks
+	 * keytool -keystore client_signed.jks -importcert -alias client_alias -file signed_chain.pem -storepass testtest -noprompt
 	 * </pre>
 	 * 
 	 * Replace <code>type</code> with <code>cat</code> and <code>copy</code> with <code>cp</code> for Unix based
-	 * systems. Fill out the prompts during execution appropriately.
+	 * systems. Change the "testtest" passwords for your use case appropriately. The commands will ask no prompts.
 	 */
 	private static void testCASignedAuthentication(Boolean needsclientauth) throws Throwable {
 		System.err.println("SSLSecurityRMITest.testCASignedAuthentication() needs client auth: " + needsclientauth);
@@ -149,7 +150,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 
 		try {
 			SetupSSLServerSocketFactory serversocketfactory = new SetupSSLServerSocketFactory(
-					getKeystoreSSLContext("ca.keystore").getServerSocketFactory());
+					getKeystoreSSLContext("ca.jks").getServerSocketFactory());
 			serversocketfactory.needsClientAuth = needsclientauth;
 
 			RMIOptions options = getOptions();
@@ -164,7 +165,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 
 			System.err.println("SSLSecurityRMITest.testCASignedAuthentication() client signed");
 			IOUtils.close(testConnection(
-					options.connect(getKeystoreSSLContext("client_signed.keystore").getSocketFactory(), sockaddress)));
+					options.connect(getKeystoreSSLContext("client_signed.jks").getSocketFactory(), sockaddress)));
 
 			System.err.println("SSLSecurityRMITest.testCASignedAuthentication() accept all");
 			if (Boolean.TRUE.equals(needsclientauth)) {
@@ -183,7 +184,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 			//this should always fail as its not signed, and the server is not trusted
 			try {
 				IOUtils.close(testConnection(
-						options.connect(getKeystoreSSLContext("keystore").getSocketFactory(), sockaddress)));
+						options.connect(getKeystoreSSLContext("k1.jks").getSocketFactory(), sockaddress)));
 				fail();
 			} catch (SSLException | SocketException e) {
 				//both may be thrown depending on who aborts the handshake first?
@@ -194,8 +195,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 				//this should fail because the server rejects it
 				try {
 					SSLContext sc = SSLContext.getInstance("SSL");
-					sc.init(getKeyManagers(getKeyStore("keystore")), getTrustManagers(getKeyStore("ca.keystore")),
-							null);
+					sc.init(getKeyManagers(getKeyStore("k1.jks")), getTrustManagers(getKeyStore("ca.jks")), null);
 					IOUtils.close(testConnection(options.connect(sc.getSocketFactory(), sockaddress)));
 					fail();
 				} catch (SSLException | SocketException e) {
@@ -204,8 +204,17 @@ public class SSLSecurityRMITest extends SakerTestCase {
 			} else {
 				//this should not fail, because the server doesn't need authentication, and we trust the server
 				SSLContext sc = SSLContext.getInstance("SSL");
-				sc.init(getKeyManagers(getKeyStore("keystore")), getTrustManagers(getKeyStore("ca.keystore")), null);
+				sc.init(getKeyManagers(getKeyStore("k1.jks")), getTrustManagers(getKeyStore("ca.jks")), null);
 				IOUtils.close(testConnection(options.connect(sc.getSocketFactory(), sockaddress)));
+			}
+
+			//this should be rejected by the client, as we don't trust the server
+			try {
+				IOUtils.close(testConnection(
+						options.connect(getKeystoreSSLContext("k1.jks").getSocketFactory(), sockaddress)));
+				fail();
+			} catch (SSLException | SocketException e) {
+				//both may be thrown depending on who aborts the handshake first?
 			}
 		} finally {
 			IOUtils.close(server);
@@ -225,7 +234,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 
 		try {
 			SetupSSLServerSocketFactory serversocketfactory = new SetupSSLServerSocketFactory(
-					getPublicKeySSLContext("public.cer").getServerSocketFactory());
+					getPublicKeySSLContext("k1_public.cer").getServerSocketFactory());
 			serversocketfactory.needsClientAuth = needsclientauth;
 
 			RMIOptions options = getOptions();
@@ -243,7 +252,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 			System.err.println("SSLSecurityRMITest.testServerPublicKeySSL() keystore");
 			try {
 				IOUtils.close(testConnection(
-						options.connect(getKeystoreSSLContext("keystore").getSocketFactory(), sockaddress)));
+						options.connect(getKeystoreSSLContext("k1.jks").getSocketFactory(), sockaddress)));
 				fail();
 			} catch (SSLException | SocketException e) {
 				//both may be thrown depending on who aborts the handshake first?
@@ -262,10 +271,10 @@ public class SSLSecurityRMITest extends SakerTestCase {
 			} catch (SSLException | SocketException e) {
 				//both may be thrown depending on who aborts the handshake first?
 			}
-			System.err.println("SSLSecurityRMITest.testServerPublicKeySSL() accept all public.cer");
+			System.err.println("SSLSecurityRMITest.testServerPublicKeySSL() accept all k1_public.cer");
 			try {
 				IOUtils.close(testConnection(
-						options.connect(getAcceptAllSocketFactory(getX509Certificate("public.cer")), sockaddress)));
+						options.connect(getAcceptAllSocketFactory(getX509Certificate("k1_public.cer")), sockaddress)));
 				fail();
 			} catch (SSLException | SocketException e) {
 				//both may be thrown depending on who aborts the handshake first?
@@ -315,10 +324,10 @@ public class SSLSecurityRMITest extends SakerTestCase {
 			assertException(SSLException.class,
 					() -> IOUtils.close(testConnection(options.connect(SSLSocketFactory.getDefault(), sockaddress))));
 
-			System.err.println("SSLSecurityRMITest.testServerPrivateKeySSL() public2.cer");
+			System.err.println("SSLSecurityRMITest.testServerPrivateKeySSL() k2_public.cer");
 			//this should always fail
 			assertException(SSLException.class, () -> IOUtils
-					.close(testConnection(options.connect(getPublicKeySocketFactory("public2.cer"), sockaddress))));
+					.close(testConnection(options.connect(getPublicKeySocketFactory("k2_public.cer"), sockaddress))));
 
 			System.err.println("SSLSecurityRMITest.testServerPrivateKeySSL() accept all");
 			if (Boolean.TRUE.equals(needsclientauth)) {
@@ -333,11 +342,11 @@ public class SSLSecurityRMITest extends SakerTestCase {
 				IOUtils.close(testConnection(options.connect(getAcceptAllSocketFactory(), sockaddress)));
 			}
 
-			System.err.println("SSLSecurityRMITest.testServerPrivateKeySSL() accept all public.cer");
+			System.err.println("SSLSecurityRMITest.testServerPrivateKeySSL() accept all k1_public.cer");
 			if (Boolean.TRUE.equals(needsclientauth)) {
 				try {
-					IOUtils.close(testConnection(
-							options.connect(getAcceptAllSocketFactory(getX509Certificate("public.cer")), sockaddress)));
+					IOUtils.close(testConnection(options
+							.connect(getAcceptAllSocketFactory(getX509Certificate("k1_public.cer")), sockaddress)));
 					fail();
 				} catch (SSLException | SocketException e) {
 					//both may be thrown depending on who aborts the handshake first?
@@ -345,7 +354,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 			} else {
 				//this will succeed
 				IOUtils.close(testConnection(
-						options.connect(getAcceptAllSocketFactory(getX509Certificate("public.cer")), sockaddress)));
+						options.connect(getAcceptAllSocketFactory(getX509Certificate("k1_public.cer")), sockaddress)));
 			}
 		} finally {
 			IOUtils.close(server);
@@ -405,7 +414,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 
 	private static SSLSocketFactory getPublicKeySocketFactory() throws KeyStoreException, CertificateException,
 			IOException, NoSuchAlgorithmException, UnrecoverableKeyException, KeyManagementException {
-		return getPublicKeySocketFactory("public.cer");
+		return getPublicKeySocketFactory("k1_public.cer");
 	}
 
 	private static SSLSocketFactory getPublicKeySocketFactory(String filename) throws CertificateException, IOException,
@@ -416,7 +425,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 	private static SSLContext getPublicKeySSLContext(String filename) throws CertificateException, IOException,
 			KeyStoreException, NoSuchAlgorithmException, UnrecoverableKeyException, KeyManagementException {
 		X509Certificate cer = getX509Certificate(filename);
-		KeyStore ks = KeyStore.getInstance("JKS");
+		KeyStore ks = KeyStore.getInstance("PKCS12");
 		ks.load(null, null);
 		ks.setCertificateEntry("test", cer);
 
@@ -443,7 +452,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 	}
 
 	private static SSLServerSocketFactory getKeystoreServerSocketFactory() throws Exception {
-		SSLContext sc = getKeystoreSSLContext("keystore");
+		SSLContext sc = getKeystoreSSLContext("k1.jks");
 		return sc.getServerSocketFactory();
 	}
 
@@ -511,12 +520,23 @@ public class SSLSecurityRMITest extends SakerTestCase {
 	private static KeyStore getKeyStore(String filename)
 			throws KeyStoreException, IOException, NoSuchAlgorithmException, CertificateException {
 		Path kspath = Paths.get(SSLSecurityRMITest.class.getSimpleName()).resolve(filename);
-		KeyStore ks = KeyStore.getInstance("JKS");
+		String kstype = getKeystoreType(filename);
+		KeyStore ks = KeyStore.getInstance(kstype);
 
 		try (InputStream is = Files.newInputStream(kspath)) {
 			ks.load(is, PASSWORD);
 		}
 		return ks;
+	}
+
+	private static String getKeystoreType(String filename) {
+		if (StringUtils.endsWithIgnoreCase(filename, ".jks")) {
+			return "JKS";
+		}
+		if (StringUtils.endsWithIgnoreCase(filename, ".pfx") || StringUtils.endsWithIgnoreCase(filename, ".p12")) {
+			return "PKCS12";
+		}
+		throw new IllegalArgumentException("Unknown keystore type: " + filename);
 	}
 
 	private static KeyManager[] getKeyManagers(KeyStore ks)
@@ -540,7 +560,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 		System.err.println("SSLSecurityRMITest.testSameSSLContext()");
 		RMIServer server = null;
 		try {
-			SSLContext sc = getKeystoreSSLContext("keystore");
+			SSLContext sc = getKeystoreSSLContext("k1.jks");
 			ServerSocketFactory serversocketfactory = sc.getServerSocketFactory();
 			SocketFactory socketfactory = sc.getSocketFactory();
 			RMIOptions options = getOptions();
