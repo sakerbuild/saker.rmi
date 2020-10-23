@@ -45,7 +45,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import saker.rmi.connection.RequestHandler.Request;
 import saker.rmi.exception.RMICallFailedException;
