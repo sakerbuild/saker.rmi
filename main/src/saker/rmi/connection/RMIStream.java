@@ -236,7 +236,7 @@ final class RMIStream implements Closeable {
 	}
 
 	protected final RMIConnection connection;
-	protected final ThreadLocal<AtomicInteger> currentThreadPreviousMethodCallRequestId;
+	protected final ThreadLocal<int[]> currentThreadPreviousMethodCallRequestId;
 	protected final RequestHandler requestHandler;
 
 	protected final BlockOutputStream blockOut;
@@ -2881,13 +2881,14 @@ final class RMIStream implements Closeable {
 	}
 
 	private void checkAborting() throws RMIIOFailureException {
-		checkAborting(nullizeRequestId(currentThreadPreviousMethodCallRequestId.get().get()));
+		checkAborting(nullizeRequestId(currentThreadPreviousMethodCallRequestId.get()[0]));
 	}
 
 	private Object invokeMethodWithRequestId(Method method, Object object, Object[] arguments, int reqid)
 			throws InvocationTargetException {
-		AtomicInteger reqidint = currentThreadPreviousMethodCallRequestId.get();
-		int currentid = reqidint.getAndSet(reqid);
+		int[] reqidint = currentThreadPreviousMethodCallRequestId.get();
+		int currentid = reqidint[0];
+		reqidint[0] = reqid;
 		try {
 			return ReflectUtils.invokeMethod(object, method, arguments);
 		} catch (IllegalArgumentException | IllegalAccessException e) {
@@ -2895,24 +2896,25 @@ final class RMIStream implements Closeable {
 					e + " on " + method + " with object type: " + ObjectUtils.classNameOf(object)
 							+ " and argument types: " + Arrays.toString(ObjectUtils.classOfArrayElements(arguments)));
 		} finally {
-			reqidint.set(currentid);
+			reqidint[0] = currentid;
 		}
 	}
 
 	private <C> C invokeConstructorWithRequestId(Constructor<C> constructor, Object[] arguments, int reqid)
 			throws InvocationTargetException, IllegalAccessException, InstantiationException {
-		AtomicInteger reqidint = currentThreadPreviousMethodCallRequestId.get();
-		int currentid = reqidint.getAndSet(reqid);
+		int[] reqidint = currentThreadPreviousMethodCallRequestId.get();
+		int currentid = reqidint[0];
+		reqidint[0] = reqid;
 		try {
 			return ReflectUtils.invokeConstructor(constructor, arguments);
 		} finally {
-			reqidint.set(currentid);
+			reqidint[0] = currentid;
 		}
 	}
 
 	Object callMethod(RMIVariables variables, int remoteid, MethodTransferProperties method, Object[] arguments)
 			throws RMIIOFailureException, InvocationTargetException {
-		Integer currentservingrequest = nullizeRequestId(currentThreadPreviousMethodCallRequestId.get().get());
+		Integer currentservingrequest = nullizeRequestId(currentThreadPreviousMethodCallRequestId.get()[0]);
 		checkAborting(currentservingrequest, variables);
 		return callMethod(variables, remoteid, method, currentservingrequest, arguments);
 	}
@@ -2992,7 +2994,7 @@ final class RMIStream implements Closeable {
 
 	Object newRemoteInstance(RMIVariables variables, ConstructorTransferProperties<?> constructor, Object... arguments)
 			throws RMIIOFailureException, InvocationTargetException, RMICallFailedException {
-		Integer currentservingrequest = nullizeRequestId(currentThreadPreviousMethodCallRequestId.get().get());
+		Integer currentservingrequest = nullizeRequestId(currentThreadPreviousMethodCallRequestId.get()[0]);
 		checkAborting(currentservingrequest, variables);
 		return newRemoteInstance(variables, constructor, currentservingrequest, arguments);
 	}
@@ -3022,7 +3024,7 @@ final class RMIStream implements Closeable {
 	Object newRemoteOnlyInstance(RMIVariables variables, int remoteclassloaderid, String classname,
 			String[] constructorargumentclasses, Object[] constructorarguments)
 			throws RMIIOFailureException, RMICallFailedException, InvocationTargetException {
-		Integer currentservingrequest = nullizeRequestId(currentThreadPreviousMethodCallRequestId.get().get());
+		Integer currentservingrequest = nullizeRequestId(currentThreadPreviousMethodCallRequestId.get()[0]);
 		checkAborting(currentservingrequest, variables);
 		return newRemoteOnlyInstance(variables, remoteclassloaderid, classname, constructorargumentclasses,
 				constructorarguments, currentservingrequest);

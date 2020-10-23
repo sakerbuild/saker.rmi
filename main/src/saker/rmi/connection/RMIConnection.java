@@ -172,8 +172,8 @@ public final class RMIConnection implements AutoCloseable {
 	private Collection<CloseListener> closeListeners = ObjectUtils.newIdentityHashSet();
 
 	private final RequestHandler requestHandler = new RequestHandler();
-	private final ThreadLocal<AtomicInteger> currentThreadPreviousMethodCallRequestId = ThreadLocal
-			.withInitial(AtomicInteger::new);
+	private final ThreadLocal<int[]> currentThreadPreviousMethodCallRequestId = ThreadLocal
+			.withInitial(() -> new int[1]);
 
 	@SuppressWarnings("unused")
 	private volatile int offeredStreamTaskCount;
@@ -499,7 +499,8 @@ public final class RMIConnection implements AutoCloseable {
 	 *             If the connection is closed, therefore the argument listener is called, and it threw an exception.
 	 * @since saker.rmi 0.8.2
 	 */
-	public void addCloseListener(CloseListener listener) throws NullPointerException, IllegalArgumentException {
+	public void addCloseListener(CloseListener listener)
+			throws NullPointerException, IllegalArgumentException, RMIListenerException {
 		Objects.requireNonNull(listener, "listener");
 		if (isRemoteObject(listener)) {
 			throw new IllegalArgumentException("Listener must be a local object.");
@@ -655,7 +656,7 @@ public final class RMIConnection implements AutoCloseable {
 		return requestHandler;
 	}
 
-	ThreadLocal<AtomicInteger> getCurrentThreadPreviousMethodCallRequestIdThreadLocal() {
+	ThreadLocal<int[]> getCurrentThreadPreviousMethodCallRequestIdThreadLocal() {
 		return currentThreadPreviousMethodCallRequestId;
 	}
 
