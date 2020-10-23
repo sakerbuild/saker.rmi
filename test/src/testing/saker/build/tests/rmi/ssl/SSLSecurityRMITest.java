@@ -167,6 +167,12 @@ public class SSLSecurityRMITest extends SakerTestCase {
 			IOUtils.close(testConnection(
 					options.connect(getKeystoreSSLContext("client_signed.jks").getSocketFactory(), sockaddress)));
 
+			//we're connecting to the server with the same certificate it uses for verification
+			//this is acceptable
+			System.err.println("SSLSecurityRMITest.testCASignedAuthentication() ca");
+			IOUtils.close(
+					testConnection(options.connect(getKeystoreSSLContext("ca.jks").getSocketFactory(), sockaddress)));
+
 			System.err.println("SSLSecurityRMITest.testCASignedAuthentication() accept all");
 			if (Boolean.TRUE.equals(needsclientauth)) {
 				try {
