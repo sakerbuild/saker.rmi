@@ -26,7 +26,6 @@ import java.net.SocketException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.InvalidAlgorithmParameterException;
 import java.security.KeyManagementException;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
@@ -39,9 +38,10 @@ import java.security.cert.PKIXBuilderParameters;
 import java.security.cert.TrustAnchor;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
@@ -116,6 +116,92 @@ public class SSLSecurityRMITest extends SakerTestCase {
 		testCASignedAuthentication(null);
 		testCASignedAuthentication(false);
 		testCASignedAuthentication(true);
+
+		testMultiServerTrustedAuthentication(null);
+		testMultiServerTrustedAuthentication(false);
+		testMultiServerTrustedAuthentication(true);
+	}
+
+	/**
+	 * Similar to {@link #testCASignedAuthentication(Boolean)}, but the server is configured to trust multiple CA
+	 * certificates.
+	 * <p>
+	 * Commands to generate: <br>
+	 * Same as {@link #testCASignedAuthentication(Boolean)}, but server and client words are replace with server{N} and
+	 * client{N}.
+	 * <p>
+	 * In mst1:
+	 * 
+	 * <pre>
+	 * keytool -genkey -alias server1_alias -keystore ca.jks -keyalg RSA -ext bc:c -dname "CN=server1" -keypass testtest -storepass testtest
+	keytool -keystore ca.jks -alias server1_alias -exportcert -rfc -storepass testtest > ca.pem
+	keytool -genkey -alias client1_alias -keystore client.jks -keyalg RSA -dname "CN=client1" -storepass testtest -keypass testtest
+	keytool -keystore client.jks -alias client1_alias -exportcert -rfc -storepass testtest > client.pem
+	keytool -keystore client.jks -certreq -alias client1_alias -keyalg rsa -file client.csr -storepass testtest
+	keytool -gencert -keystore ca.jks -alias server1_alias -storepass testtest -infile client.csr -ext ku:c=dig,keyEncipherment -rfc -outfile signed.pem
+	type ca.pem signed.pem > signed_chain.pem
+	copy client.jks client_signed.jks
+	keytool -keystore client_signed.jks -importcert -alias client1_alias -file signed_chain.pem -storepass testtest -noprompt
+	 * </pre>
+	 * 
+	 * In mst2:
+	 * 
+	 * <pre>
+	keytool -genkey -alias server2_alias -keystore ca.jks -keyalg RSA -ext bc:c -dname "CN=server2" -keypass testtest -storepass testtest
+	keytool -keystore ca.jks -alias server2_alias -exportcert -rfc -storepass testtest > ca.pem
+	keytool -genkey -alias client2_alias -keystore client.jks -keyalg RSA -dname "CN=client2" -storepass testtest -keypass testtest
+	keytool -keystore client.jks -alias client2_alias -exportcert -rfc -storepass testtest > client.pem
+	keytool -keystore client.jks -certreq -alias client2_alias -keyalg rsa -file client.csr -storepass testtest
+	keytool -gencert -keystore ca.jks -alias server2_alias -storepass testtest -infile client.csr -ext ku:c=dig,keyEncipherment -rfc -outfile signed.pem
+	type ca.pem signed.pem > signed_chain.pem
+	copy client.jks client_signed.jks
+	keytool -keystore client_signed.jks -importcert -alias client2_alias -file signed_chain.pem -storepass testtest -noprompt
+	 * </pre>
+	 * 
+	 * In mst:
+	 * 
+	 * <pre>
+	 * keytool -export -keystore ../mst1/ca.jks -alias server1_alias -file ca1.cer -storepass testtest
+	keytool -export -keystore ../mst2/ca.jks -alias server2_alias -file ca2.cer -storepass testtest
+	keytool -genkey -alias servermulti_alias -keystore ca_multi.jks -keyalg RSA -ext bc:c -dname "CN=server_multi" -keypass testtest -storepass testtest
+	keytool -importcert -file ca1.cer -keystore ca_multi.jks -alias server1_alias -storepass testtest -noprompt
+	keytool -importcert -file ca2.cer -keystore ca_multi.jks -alias server2_alias -storepass testtest -noprompt
+	keytool -export -keystore ca_multi.jks -alias servermulti_alias -file ca_multi.cer -storepass testtest
+	keytool -importcert -file ca_multi.cer -keystore ../mst1/client_signed.jks -alias servermulti_alias -storepass testtest -noprompt
+	keytool -importcert -file ca_multi.cer -keystore ../mst2/client_signed.jks -alias servermulti_alias -storepass testtest -noprompt
+	 * </pre>
+	 */
+	private static void testMultiServerTrustedAuthentication(Boolean needsclientauth) throws Throwable {
+		System.err.println(
+				"SSLSecurityRMITest.testMultiServerTrustedAuthentication() needs client auth: " + needsclientauth);
+
+		RMIServer server = null;
+
+		try {
+			SetupSSLServerSocketFactory serversocketfactory = new SetupSSLServerSocketFactory(
+					getKeystoreSSLContext("mst/ca_multi.jks").getServerSocketFactory());
+			serversocketfactory.needsClientAuth = needsclientauth;
+
+			RMIOptions options = getOptions().maxStreamCount(1);
+			server = new RMIServer(serversocketfactory, 0, InetAddress.getLoopbackAddress()) {
+				@Override
+				protected RMIOptions getRMIOptionsForAcceptedConnection(Socket acceptedsocket, int protocolversion) {
+					return options;
+				}
+			};
+			SocketAddress sockaddress = server.getLocalSocketAddress();
+			server.start();
+
+			System.err.println("SSLSecurityRMITest.testMultiServerTrustedAuthentication() mst1 client signed");
+			IOUtils.close(testConnection(
+					options.connect(getKeystoreSSLContext("mst1/client_signed.jks").getSocketFactory(), sockaddress)));
+
+			System.err.println("SSLSecurityRMITest.testMultiServerTrustedAuthentication() mst2 client signed");
+			IOUtils.close(testConnection(
+					options.connect(getKeystoreSSLContext("mst2/client_signed.jks").getSocketFactory(), sockaddress)));
+		} finally {
+			IOUtils.close(server);
+		}
 	}
 
 	/**
@@ -471,54 +557,60 @@ public class SSLSecurityRMITest extends SakerTestCase {
 		return sc;
 	}
 
-	private static TrustManager[] getTrustManagers(KeyStore ks)
-			throws KeyStoreException, NoSuchAlgorithmException, InvalidAlgorithmParameterException {
+	private static TrustManager[] getTrustManagers(KeyStore ks) throws Exception {
 		TrustManagerFactory tmfactory = getTrustManagerFactory(ks);
 		TrustManager[] trustmanagers = tmfactory.getTrustManagers();
 		return trustmanagers;
 	}
 
-	private static TrustManagerFactory getTrustManagerFactory(KeyStore ks)
-			throws KeyStoreException, NoSuchAlgorithmException, InvalidAlgorithmParameterException {
-		X509Certificate trustedcert = null;
+	private static TrustManagerFactory getTrustManagerFactory(KeyStore ks) throws Exception {
+		Set<TrustAnchor> trustanchors = new HashSet<>();
 
 		Enumeration<String> aliases = ks.aliases();
-		if (!aliases.hasMoreElements()) {
-			throw new IllegalArgumentException("No aliases in keystore. ");
-		}
-		String alias = aliases.nextElement();
-		if (aliases.hasMoreElements()) {
-			throw new IllegalArgumentException(
-					"Too many aliases in keystore: " + alias + " and " + aliases.nextElement());
-		}
-		System.out.println(
-				"Alias: " + alias + " is cert: " + ks.isCertificateEntry(alias) + " is key: " + ks.isKeyEntry(alias));
+		while (aliases.hasMoreElements()) {
+			String alias = aliases.nextElement();
 
-		Certificate[] chain = ks.getCertificateChain(alias);
-		if (ObjectUtils.isNullOrEmpty(chain)) {
-			throw new IllegalArgumentException(
-					"Certificate chain " + (chain == null ? "not found" : "is empty") + " for alias: " + alias);
-		}
-		Certificate cert = chain[0];
-		System.out.println("Key usage: " + Arrays.toString(((X509Certificate) cert).getKeyUsage()));
-		int basicconstraints = ((X509Certificate) cert).getBasicConstraints();
-		System.out.println("Basic constraints: " + basicconstraints);
-		System.out.println("Chain: " + Arrays.toString(chain));
-		if (basicconstraints >= 0 || chain.length < 2) {
-			//this certificate is a ca, or there are no signers for it
-			//use this as the anchor
-			trustedcert = (X509Certificate) cert;
-		} else {
-			//use the next certificate for the anchor
-			trustedcert = (X509Certificate) chain[1];
-		}
+			boolean certentry = ks.isCertificateEntry(alias);
+			System.out.println("Alias: " + alias + " is cert: " + certentry + " is key: " + ks.isKeyEntry(alias));
 
-		TrustManagerFactory tmfactory = TrustManagerFactory.getInstance("PKIX");
-		System.out.println("Trusted cert is: " + trustedcert.getIssuerDN());
-		PKIXBuilderParameters pkixbuilderparams = new PKIXBuilderParameters(
-				Collections.singleton(new TrustAnchor(trustedcert, null)), null);
+			if (certentry) {
+				Certificate cert = ks.getCertificate(alias);
+				System.out.println("Alias is trusted cert: " + alias + " with " + cert);
+				trustanchors.add(new TrustAnchor((X509Certificate) cert, null));
+				continue;
+			}
+
+			Certificate[] chain = ks.getCertificateChain(alias);
+			if (ObjectUtils.isNullOrEmpty(chain)) {
+				System.out.println(
+						"Certificate chain " + (chain == null ? "not found" : "is empty") + " for alias: " + alias);
+				continue;
+			}
+			Certificate cert = chain[0];
+			System.out.println("Key usage: " + Arrays.toString(((X509Certificate) cert).getKeyUsage()));
+			int basicconstraints = ((X509Certificate) cert).getBasicConstraints();
+			System.out.println("Basic constraints: " + basicconstraints);
+			System.out.println("Chain: " + Arrays.toString(chain));
+			X509Certificate trustedcert;
+			if (basicconstraints >= 0 || chain.length < 2) {
+				//this certificate is a ca, or there are no signers for it
+				//use this as the anchor
+				trustedcert = (X509Certificate) cert;
+			} else {
+				//use the next certificate for the anchor
+				trustedcert = (X509Certificate) chain[1];
+			}
+
+			System.out.println("Trusted cert is: " + trustedcert.getIssuerDN());
+			trustanchors.add(new TrustAnchor(trustedcert, null));
+		}
+		System.out.println("SSLSecurityRMITest.getTrustManagerFactory() " + trustanchors);
+
+		PKIXBuilderParameters pkixbuilderparams = new PKIXBuilderParameters(trustanchors, null);
 		//no need for revocation checks as we're using self signed certificates
 		pkixbuilderparams.setRevocationEnabled(false);
+
+		TrustManagerFactory tmfactory = TrustManagerFactory.getInstance("PKIX");
 		tmfactory.init(new CertPathTrustManagerParameters(pkixbuilderparams));
 		return tmfactory;
 	}
@@ -549,6 +641,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 			throws NoSuchAlgorithmException, KeyStoreException, UnrecoverableKeyException {
 		KeyManagerFactory kmfactory = getKeyManagerFactory(ks);
 		KeyManager[] keymanagers = kmfactory.getKeyManagers();
+		System.out.println("SSLSecurityRMITest.getKeyManagers() " + Arrays.toString(keymanagers));
 		return keymanagers;
 	}
 
