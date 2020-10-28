@@ -182,7 +182,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 					getKeystoreSSLContext("mst/ca_multi.jks").getServerSocketFactory());
 			serversocketfactory.needsClientAuth = needsclientauth;
 
-			RMIOptions options = getOptions().maxStreamCount(1);
+			RMIOptions options = getOptions();
 			server = new RMIServer(serversocketfactory, 0, InetAddress.getLoopbackAddress()) {
 				@Override
 				protected RMIOptions getRMIOptionsForAcceptedConnection(Socket acceptedsocket, int protocolversion) {
@@ -720,23 +720,13 @@ public class SSLSecurityRMITest extends SakerTestCase {
 		}
 	}
 
-	private static class SetupSSLServerSocketFactory extends SSLServerSocketFactory {
+	private static class SetupSSLServerSocketFactory extends ServerSocketFactory {
 		private SSLServerSocketFactory factory;
 
 		protected Boolean needsClientAuth;
 
 		public SetupSSLServerSocketFactory(SSLServerSocketFactory factory) {
 			this.factory = factory;
-		}
-
-		@Override
-		public String[] getDefaultCipherSuites() {
-			return factory.getDefaultCipherSuites();
-		}
-
-		@Override
-		public String[] getSupportedCipherSuites() {
-			return factory.getSupportedCipherSuites();
 		}
 
 		@Override

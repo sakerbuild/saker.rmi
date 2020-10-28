@@ -16,6 +16,7 @@
 package saker.rmi.connection;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
@@ -105,6 +106,7 @@ public class RMIVariables implements AutoCloseable {
 	private RMIProxyClassLoader proxyBaseClassLoader;
 	private ConcurrentHashMap<Set<Class<?>>, Constructor<? extends RemoteProxyObject>> proxyConstructors = new ConcurrentHashMap<>();
 	private Class<?> proxyMarkerClass;
+	private MethodHandles.Lookup markerClassLookup;
 	private Map<Set<ClassLoader>, RMIClassDefiner> multiProxyClassDefiners = new HashMap<>();
 	private final Object proxyGeneratorLock = new Object();
 	private int proxyNameIdCounter = 0;
@@ -137,6 +139,7 @@ public class RMIVariables implements AutoCloseable {
 		boolean hasstatistics = connection.isStatisticsCollected();
 		this.proxyMarkerClass = this.proxyBaseClassLoader.defineClass(PROXY_MARKER_CLASS_NAME,
 				ProxyGenerator.generateProxyMarkerClass(PROXY_MARKER_CLASS_NAME, hasstatistics));
+		this.markerClassLookup = MethodHandles.lookup().in(proxyMarkerClass);
 		if (hasstatistics) {
 			try {
 				this.proxyMarkerClass.getField(ProxyGenerator.PROXY_MARKER_RMI_STATISTICS_FIELD_NAME).set(null,
@@ -1024,6 +1027,16 @@ public class RMIVariables implements AutoCloseable {
 		return this.remoteIdentifier;
 	}
 
+	MethodHandles.Lookup getMarkerClassLookup() {
+		return markerClassLookup;
+	}
+
+	Object invokeRemoteMethodInternal(int remoteid, MethodTransferProperties method, Object[] arguments)
+			throws RMIRuntimeException, InvocationTargetException {
+		checkForbidden(method);
+		return invokeAllowedNonRedirectMethod(remoteid, method, arguments);
+	}
+
 	private static class LocalObjectReference extends WeakReference<Object> {
 		final int localId;
 		Object strongReference;
@@ -1132,12 +1145,6 @@ public class RMIVariables implements AutoCloseable {
 		}
 	}
 
-	Object invokeRemoteMethodInternal(int remoteid, MethodTransferProperties method, Object[] arguments)
-			throws RMIRuntimeException, InvocationTargetException {
-		checkForbidden(method);
-		return invokeAllowedNonRedirectMethod(remoteid, method, arguments);
-	}
-
 	private Object invokeMethod(int remoteid, Object remoteobject, MethodTransferProperties method, Object[] arguments)
 			throws RMIRuntimeException, InvocationTargetException {
 		Method redirectmethod = method.getRedirectMethod();
@@ -1182,7 +1189,7 @@ public class RMIVariables implements AutoCloseable {
 	}
 
 	private Constructor<? extends RemoteProxyObject> getProxyConstructorForRequestedClass(Class<?> requestedclass) {
-		Set<Class<?>> interfaces = RMIStream.getPublicNonAssignableInterfaces(requestedclass);
+		Set<Class<?>> interfaces = getProxyInterfacesForRequestedClass(requestedclass);
 		Constructor<? extends RemoteProxyObject> c = proxyConstructors.get(interfaces);
 		if (c == null) {
 			synchronized (proxyGeneratorLock) {
@@ -1194,6 +1201,11 @@ public class RMIVariables implements AutoCloseable {
 			}
 		}
 		return c;
+	}
+
+	private Set<Class<?>> getProxyInterfacesForRequestedClass(Class<?> requestedclass) {
+		return RMIStream.getPublicNonAssignableInterfaces(requestedclass, markerClassLookup,
+				connection.getCollectingStatistics());
 	}
 
 	private Constructor<? extends RemoteProxyObject> getProxyConstructor(Set<Class<?>> interfaces) {
@@ -1364,6 +1376,7 @@ public class RMIVariables implements AutoCloseable {
 		proxyBaseClassLoader = null;
 		proxyConstructors = null;
 		proxyMarkerClass = null;
+		markerClassLookup = null;
 		multiProxyClassDefiners = null;
 		properties = null;
 	}

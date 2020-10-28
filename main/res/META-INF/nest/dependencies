@@ -1,4 +1,4 @@
 saker.rmi-api
 	classpath: [this]
 saker.util
-	classpath: 0.8
+	classpath: [0.8.2)

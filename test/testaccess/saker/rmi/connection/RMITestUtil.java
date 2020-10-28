@@ -17,18 +17,10 @@ package saker.rmi.connection;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Method;
 import java.util.Set;
 
-import saker.rmi.connection.AutoCreatingRMITransferProperties;
-import saker.rmi.connection.MethodTransferProperties;
-import saker.rmi.connection.ProxyGenerator;
-import saker.rmi.connection.RMIConnection;
-import saker.rmi.connection.RMIOptions;
-import saker.rmi.connection.RMIStream;
-import saker.rmi.connection.RMITransferProperties;
-import saker.rmi.connection.RMIVariables;
-import saker.rmi.connection.RemoteProxyObject;
 import saker.util.ReflectUtils;
 import saker.util.io.ByteSource;
 import saker.util.io.ReadWriteBufferOutputStream;
@@ -144,6 +136,10 @@ public class RMITestUtil {
 			validateMethodProperties(itf);
 		}
 		validateMethodProperties(c.getSuperclass());
+	}
+
+	public static Set<Class<?>> getPublicInterfaceSetOf(Class<?> c) {
+		return RMIStream.getPublicNonAssignableInterfaces(c, MethodHandles.lookup(), null);
 	}
 
 }
