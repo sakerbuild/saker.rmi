@@ -49,12 +49,19 @@ public class SocketConfigurationTest extends SakerTestCase {
 		//the interrupted flag should be set
 		assertTrue(Thread.interrupted());
 
+		//already interrupted, should fail right away
+		currentthread.interrupt();
+		assertException(ClosedByInterruptException.class,
+				() -> new RMIOptions().connect(timeoutingaddress, socketconfig));
+		assertTrue(Thread.interrupted());
+
 		//if we set the interruptible to false, it should time out, even if we interrupt the thread
 		startInterruptThread(currentthread);
 		socketconfig.setConnectionTimeout(2000);
 		socketconfig.setConnectionInterruptible(false);
 		assertException(SocketTimeoutException.class, () -> new RMIOptions().connect(timeoutingaddress, socketconfig));
 		assertTrue(Thread.interrupted());
+
 	}
 
 	private static void startInterruptThread(Thread currentthread) {
