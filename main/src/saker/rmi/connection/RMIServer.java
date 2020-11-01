@@ -25,9 +25,16 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.net.SocketException;
+import java.nio.channels.ClosedByInterruptException;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.spi.AbstractSelectableChannel;
+import java.nio.channels.spi.AbstractSelector;
 import java.util.Collection;
 import java.util.Map.Entry;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
@@ -41,6 +48,7 @@ import javax.net.ssl.SSLSocketFactory;
 
 import saker.util.ObjectUtils;
 import saker.util.io.IOUtils;
+import saker.util.io.SerialUtils;
 import saker.util.io.StreamPair;
 import saker.util.io.function.IOFunction;
 import saker.util.thread.ThreadUtils;
@@ -331,6 +339,7 @@ public class RMIServer implements AutoCloseable {
 		Objects.requireNonNull(address, "address");
 		int connectiontimeoutms = DEFAULT_CONNECTION_TIMEOUT_MS;
 		try (Socket s = socketfactory == null ? new Socket() : socketfactory.createSocket()) {
+			s.setSoTimeout(connectiontimeoutms);
 			s.connect(address, connectiontimeoutms);
 
 			OutputStream socketos = s.getOutputStream();
@@ -403,6 +412,7 @@ public class RMIServer implements AutoCloseable {
 		Objects.requireNonNull(address, "address");
 		int connectiontimeoutms = DEFAULT_CONNECTION_TIMEOUT_MS;
 		try (Socket s = socketfactory == null ? new Socket() : socketfactory.createSocket()) {
+			s.setSoTimeout(connectiontimeoutms);
 			s.connect(address, connectiontimeoutms);
 
 			OutputStream socketos = s.getOutputStream();
@@ -636,8 +646,31 @@ public class RMIServer implements AutoCloseable {
 		}
 	}
 
+	private static final byte[] NEW_CONNECTION_HELLO_BYTES;
+	static {
+		NEW_CONNECTION_HELLO_BYTES = new byte[3 * 2];
+		SerialUtils.writeShortToBuffer(RMIServer.CONNECTION_MAGIC_NUMBER, NEW_CONNECTION_HELLO_BYTES, 0);
+		SerialUtils.writeShortToBuffer(RMIConnection.PROTOCOL_VERSION_LATEST, NEW_CONNECTION_HELLO_BYTES, 2);
+		SerialUtils.writeShortToBuffer(RMIServer.COMMAND_NEW_CONNECTION, NEW_CONNECTION_HELLO_BYTES, 4);
+	}
+
 	static RMIConnection newConnection(RMIOptions options, SocketFactory socketfactory, SocketAddress address)
 			throws IOException {
+		return newConnection(options, socketfactory, address, DEFAULT_CONNECTION_TIMEOUT_MS, false);
+	}
+
+	static RMIConnection newConnection(RMIOptions options, SocketAddress address, RMISocketConfiguration socketconfig)
+			throws IOException {
+		int timeout = socketconfig.getConnectionTimeout();
+		if (timeout < 0) {
+			timeout = DEFAULT_CONNECTION_TIMEOUT_MS;
+		}
+		return newConnection(options, socketconfig.getSocketFactory(), address, timeout,
+				socketconfig.isConnectionInterruptible());
+	}
+
+	private static RMIConnection newConnection(RMIOptions options, SocketFactory socketfactory, SocketAddress address,
+			int connectiontimeout, boolean interruptible) throws IOException {
 		Socket sockclose = null;
 		IOException exc = null;
 		try {
@@ -651,44 +684,55 @@ public class RMIServer implements AutoCloseable {
 				s = socketfactory.createSocket();
 			}
 			sockclose = s;
+			long mostsig;
+			long leastsig;
+			short useversion;
+			OutputStream sockout;
+			InputStream sockin;
 
-			RMIServer.initSocketOptions(s);
+			try (ConnectionInterruptor interruptor = interruptible ? ConnectionInterruptor.create(s) : null) {
+				RMIServer.initSocketOptions(s);
 
-			s.connect(address, 5000);
+				s.setSoTimeout(connectiontimeout);
+				s.connect(address, connectiontimeout);
 
-			OutputStream sockout = s.getOutputStream();
-			InputStream sockin = s.getInputStream();
+				sockout = s.getOutputStream();
+				sockin = s.getInputStream();
 
-			DataOutputStream dataos = new DataOutputStream(sockout);
-			DataInputStream datais = new DataInputStream(sockin);
-			dataos.writeShort(RMIServer.CONNECTION_MAGIC_NUMBER);
-			dataos.writeShort(RMIConnection.PROTOCOL_VERSION_LATEST);
-			dataos.writeShort(RMIServer.COMMAND_NEW_CONNECTION);
-			dataos.flush();
-			short magic = datais.readShort();
-			if (magic != RMIServer.CONNECTION_MAGIC_NUMBER) {
-				if (!(s instanceof SSLSocket)) {
-					throw new IOException("Invalid magic: 0x" + Integer.toHexString(magic)
-							+ ", attempting to connect to SSL socket?");
+				DataInputStream datais = new DataInputStream(sockin);
+				sockout.write(NEW_CONNECTION_HELLO_BYTES);
+				short magic = datais.readShort();
+				if (magic != RMIServer.CONNECTION_MAGIC_NUMBER) {
+					if (!(s instanceof SSLSocket)) {
+						throw new IOException("Invalid magic: 0x" + Integer.toHexString(magic)
+								+ ", attempting to connect to SSL socket?");
+					}
+					throw new IOException("Invalid magic: 0x" + Integer.toHexString(magic));
 				}
-				throw new IOException("Invalid magic: 0x" + Integer.toHexString(magic));
-			}
-			short remoteversion = datais.readShort();
-			short useversion = remoteversion > RMIConnection.PROTOCOL_VERSION_LATEST
-					? RMIConnection.PROTOCOL_VERSION_LATEST
-					: remoteversion;
-			if (useversion <= 0) {
-				//invalid version selected
-				throw new IOException("Invalid version: 0x" + Integer.toHexString(magic));
-			}
-			short cmd = datais.readShort();
-			if (cmd != RMIServer.COMMAND_NEW_CONNECTION_RESPONSE) {
-				throw new IOException("Invalid response: " + cmd);
-			}
-			long mostsig = datais.readLong();
-			long leastsig = datais.readLong();
+				short remoteversion = datais.readShort();
+				useversion = remoteversion > RMIConnection.PROTOCOL_VERSION_LATEST
+						? RMIConnection.PROTOCOL_VERSION_LATEST
+						: remoteversion;
+				if (useversion <= 0) {
+					//invalid version selected
+					throw new IOException("Invalid version: 0x" + Integer.toHexString(magic));
+				}
+				short cmd = datais.readShort();
+				if (cmd != RMIServer.COMMAND_NEW_CONNECTION_RESPONSE) {
+					throw new IOException("Invalid response: " + cmd);
+				}
+				mostsig = datais.readLong();
+				leastsig = datais.readLong();
 
-			s.setSoTimeout(0);
+				s.setSoTimeout(0);
+			} catch (SocketException e) {
+				if (interruptible && Thread.currentThread().isInterrupted()) {
+					ClosedByInterruptException thrown = new ClosedByInterruptException();
+					thrown.addSuppressed(e);
+					throw thrown;
+				}
+				throw e;
+			}
 
 			UUID uuid = new UUID(mostsig, leastsig);
 			sockclose = null;
@@ -1020,6 +1064,79 @@ public class RMIServer implements AutoCloseable {
 					exc.addSuppressed(sockexc);
 				}
 			}
+		}
+	}
+
+	private static class ConnectionInterruptor extends AbstractSelector {
+		private static final AtomicReferenceFieldUpdater<RMIServer.ConnectionInterruptor, IOException> ARFU_closeException = AtomicReferenceFieldUpdater
+				.newUpdater(RMIServer.ConnectionInterruptor.class, IOException.class, "closeException");
+
+		protected Socket socket;
+		protected volatile IOException closeException;
+
+		private ConnectionInterruptor(Socket socket) {
+			super(null);
+			this.socket = socket;
+		}
+
+		protected static ConnectionInterruptor create(Socket socket) {
+			ConnectionInterruptor result = new ConnectionInterruptor(socket);
+			result.begin();
+			return result;
+		}
+
+		@Override
+		protected void implCloseSelector() {
+			end();
+		}
+
+		@Override
+		protected SelectionKey register(AbstractSelectableChannel ch, int ops, Object att) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public Set<SelectionKey> keys() {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public Set<SelectionKey> selectedKeys() {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public int selectNow() throws IOException {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public int select(long timeout) throws IOException {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public int select() throws IOException {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public Selector wakeup() {
+			try {
+				socket.close();
+			} catch (IOException e) {
+				while (true) {
+					IOException ce = this.closeException;
+					if (ce != null) {
+						ce.addSuppressed(e);
+						break;
+					}
+					if (ARFU_closeException.compareAndSet(this, null, e)) {
+						break;
+					}
+				}
+			}
+			return this;
 		}
 
 	}

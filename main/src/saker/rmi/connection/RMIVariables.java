@@ -179,7 +179,7 @@ public class RMIVariables implements AutoCloseable {
 	 * Closes this RMI variables.
 	 * <p>
 	 * Closing of a variables context occurs asynchronously. All concurrent requests will be finished, and then the
-	 * variables will be completly closed. When that occurs, no more remote method calls can be instantiated through it.
+	 * variables will be completely closed. When that occurs, no more remote method calls can be instantiated through it.
 	 * <p>
 	 * This method never throws an exception.
 	 */
