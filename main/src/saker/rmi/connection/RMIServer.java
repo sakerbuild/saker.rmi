@@ -313,15 +313,8 @@ public class RMIServer implements AutoCloseable {
 	/**
 	 * Sends a shutdown request to the RMI server running at the given address if any.
 	 * <p>
-	 * A connection will be established to the given address, and the {@link RMIServer} running on that endpoint will be
-	 * asked to shut down. (I.e. close itself)
-	 * <p>
-	 * The server will call its implementation {@link #validateShutdownRequest(Socket)} method and will decide if it
-	 * wants to satisfy the request. If the remote server is shutting down, this method will complete successfully.
-	 * <p>
-	 * If the connection failed to establish, an {@link IOException} will be thrown.
-	 * <p>
-	 * If the shutdown request is denied, an {@link RMIShutdownRequestDeniedException} will be thrown.
+	 * Works the same way as {@link #shutdownServer(SocketAddress, RMISocketConfiguration)} with the given socket
+	 * factory and defaults.
 	 * 
 	 * @param socketfactory
 	 *            The socket factory to use for connection, or <code>null</code> to use none.
@@ -336,36 +329,84 @@ public class RMIServer implements AutoCloseable {
 	 */
 	public static void shutdownServer(SocketFactory socketfactory, SocketAddress address)
 			throws IOException, RMIShutdownRequestDeniedException, NullPointerException {
+		shutdownServer(socketfactory, address, DEFAULT_CONNECTION_TIMEOUT_MS, false);
+	}
+
+	/**
+	 * Sends a shutdown request to the RMI server running at the given address if any.
+	 * <p>
+	 * A connection will be established to the given address, and the {@link RMIServer} running on that endpoint will be
+	 * asked to shut down. (I.e. close itself)
+	 * <p>
+	 * The server will call its implementation {@link #validateShutdownRequest(Socket)} method and will decide if it
+	 * wants to satisfy the request. If the remote server is shutting down, this method will complete successfully.
+	 * <p>
+	 * If the connection failed to establish, an {@link IOException} will be thrown.
+	 * <p>
+	 * If the shutdown request is denied, an {@link RMIShutdownRequestDeniedException} will be thrown.
+	 * 
+	 * @param address
+	 *            The address to shutdown the server at.
+	 * @param socketconfig
+	 *            The socket configuration to use.
+	 * @throws IOException
+	 *             In case of I/O error.
+	 * @throws RMIShutdownRequestDeniedException
+	 *             If the shutdown request was denied by the remote endpoint.
+	 * @throws NullPointerException
+	 *             If any of the arguments are <code>null</code>.
+	 * @since saker.rmi 0.8.2
+	 */
+	public static void shutdownServer(SocketAddress address, RMISocketConfiguration socketconfig)
+			throws IOException, RMIShutdownRequestDeniedException, NullPointerException {
+		Objects.requireNonNull(socketconfig, "socket config");
+		int timeout = socketconfig.getConnectionTimeout();
+		if (timeout < 0) {
+			timeout = DEFAULT_CONNECTION_TIMEOUT_MS;
+		}
+		shutdownServer(socketconfig.getSocketFactory(), address, timeout, socketconfig.isConnectionInterruptible());
+	}
+
+	private static void shutdownServer(SocketFactory socketfactory, SocketAddress address, int connectiontimeoutms,
+			boolean interruptible) throws SocketException, IOException {
 		Objects.requireNonNull(address, "address");
-		int connectiontimeoutms = DEFAULT_CONNECTION_TIMEOUT_MS;
 		try (Socket s = socketfactory == null ? new Socket() : socketfactory.createSocket()) {
-			s.setSoTimeout(connectiontimeoutms);
-			s.connect(address, connectiontimeoutms);
+			try (ConnectionInterruptor interruptor = interruptible ? ConnectionInterruptor.create(s) : null) {
+				s.setSoTimeout(connectiontimeoutms);
+				s.connect(address, connectiontimeoutms);
 
-			OutputStream socketos = s.getOutputStream();
-			InputStream socketis = s.getInputStream();
-			DataOutputStream dataos = new DataOutputStream(socketos);
-			DataInputStream datais = new DataInputStream(socketis);
+				OutputStream socketos = s.getOutputStream();
+				InputStream socketis = s.getInputStream();
+				DataOutputStream dataos = new DataOutputStream(socketos);
+				DataInputStream datais = new DataInputStream(socketis);
 
-			dataos.writeShort(RMIServer.CONNECTION_MAGIC_NUMBER);
-			dataos.writeShort(RMIConnection.PROTOCOL_VERSION_LATEST);
-			dataos.writeShort(COMMAND_SHUTDOWN_SERVER);
-			dataos.flush();
-			short magic = datais.readShort();
-			if (magic != RMIServer.CONNECTION_MAGIC_NUMBER) {
-				throw new IOException("Invalid magic: 0x" + Integer.toHexString(magic));
-			}
-			short remoteversion = datais.readShort();
-			short useversion = remoteversion > RMIConnection.PROTOCOL_VERSION_LATEST
-					? RMIConnection.PROTOCOL_VERSION_LATEST
-					: remoteversion;
-			if (useversion <= 0) {
-				throw new IOException("Invalid version detected: 0x" + Integer.toHexString(useversion));
-			}
-			short response = datais.readShort();
-			if (response != COMMAND_SHUTDOWN_SERVER_RESPONSE) {
-				throw new RMIShutdownRequestDeniedException(
-						"Failed to shutdown server (response code: " + response + ")", address);
+				dataos.writeShort(RMIServer.CONNECTION_MAGIC_NUMBER);
+				dataos.writeShort(RMIConnection.PROTOCOL_VERSION_LATEST);
+				dataos.writeShort(COMMAND_SHUTDOWN_SERVER);
+				dataos.flush();
+				short magic = datais.readShort();
+				if (magic != RMIServer.CONNECTION_MAGIC_NUMBER) {
+					throw new IOException("Invalid magic: 0x" + Integer.toHexString(magic));
+				}
+				short remoteversion = datais.readShort();
+				short useversion = remoteversion > RMIConnection.PROTOCOL_VERSION_LATEST
+						? RMIConnection.PROTOCOL_VERSION_LATEST
+						: remoteversion;
+				if (useversion <= 0) {
+					throw new IOException("Invalid version detected: 0x" + Integer.toHexString(useversion));
+				}
+				short response = datais.readShort();
+				if (response != COMMAND_SHUTDOWN_SERVER_RESPONSE) {
+					throw new RMIShutdownRequestDeniedException(
+							"Failed to shutdown server (response code: " + response + ")", address);
+				}
+			} catch (SocketException e) {
+				if (interruptible && Thread.currentThread().isInterrupted()) {
+					ClosedByInterruptException thrown = new ClosedByInterruptException();
+					thrown.addSuppressed(e);
+					throw thrown;
+				}
+				throw e;
 			}
 		}
 	}
@@ -388,6 +429,24 @@ public class RMIServer implements AutoCloseable {
 	/**
 	 * Pings the RMI server at the given address if there is any.
 	 * <p>
+	 * Works the same way as {@link #pingServer(SocketAddress, RMISocketConfiguration)} with the given socket factory
+	 * and defaults.
+	 * 
+	 * @param socketfactory
+	 *            The socket factory to use for connection, or <code>null</code> to use none.
+	 * @param address
+	 *            The address to send the ping to.
+	 * @return <code>true</code> if the server at the given address responded to the ping successfully.
+	 * @throws NullPointerException
+	 *             If the address is <code>null</code>.
+	 */
+	public static boolean pingServer(SocketFactory socketfactory, SocketAddress address) throws NullPointerException {
+		return pingServer(socketfactory, address, DEFAULT_CONNECTION_TIMEOUT_MS, false);
+	}
+
+	/**
+	 * Pings the RMI server at the given address if there is any.
+	 * <p>
 	 * This method establishes a connection to the given address, and sends a ping request to the {@link RMIServer}
 	 * running at that endpoint.
 	 * <p>
@@ -400,18 +459,25 @@ public class RMIServer implements AutoCloseable {
 	 * This method doesn't throw {@link IOException} or others in case of errors, but will just simply return
 	 * <code>false</code>.
 	 * 
-	 * @param socketfactory
-	 *            The socket factory to use for connection, or <code>null</code> to use none.
 	 * @param address
 	 *            The address to send the ping to.
+	 * @param socketconfig
+	 *            The socket configuration to use.
 	 * @return <code>true</code> if the server at the given address responded to the ping successfully.
 	 * @throws NullPointerException
-	 *             If the address is <code>null</code>.
+	 *             If any of the arguments are <code>null</code>.
+	 * @since saker.rmi 0.8.2
 	 */
-	public static boolean pingServer(SocketFactory socketfactory, SocketAddress address) throws NullPointerException {
+	public static boolean pingServer(SocketAddress address, RMISocketConfiguration socketconfig)
+			throws NullPointerException {
+		return pingServer(socketconfig.getSocketFactory(), address, DEFAULT_CONNECTION_TIMEOUT_MS, false);
+	}
+
+	private static boolean pingServer(SocketFactory socketfactory, SocketAddress address, int connectiontimeoutms,
+			boolean interruptible) {
 		Objects.requireNonNull(address, "address");
-		int connectiontimeoutms = DEFAULT_CONNECTION_TIMEOUT_MS;
-		try (Socket s = socketfactory == null ? new Socket() : socketfactory.createSocket()) {
+		try (Socket s = socketfactory == null ? new Socket() : socketfactory.createSocket();
+				ConnectionInterruptor interruptor = interruptible ? ConnectionInterruptor.create(s) : null) {
 			s.setSoTimeout(connectiontimeoutms);
 			s.connect(address, connectiontimeoutms);
 
