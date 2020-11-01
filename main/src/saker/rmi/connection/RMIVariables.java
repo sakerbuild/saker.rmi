@@ -35,8 +35,6 @@ import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
-import org.objectweb.asm.Type;
-
 import saker.rmi.exception.RMICallFailedException;
 import saker.rmi.exception.RMICallForbiddenException;
 import saker.rmi.exception.RMIIOFailureException;
@@ -179,7 +177,8 @@ public class RMIVariables implements AutoCloseable {
 	 * Closes this RMI variables.
 	 * <p>
 	 * Closing of a variables context occurs asynchronously. All concurrent requests will be finished, and then the
-	 * variables will be completely closed. When that occurs, no more remote method calls can be instantiated through it.
+	 * variables will be completely closed. When that occurs, no more remote method calls can be instantiated through
+	 * it.
 	 * <p>
 	 * This method never throws an exception.
 	 */
@@ -1236,7 +1235,7 @@ public class RMIVariables implements AutoCloseable {
 		@SuppressWarnings("unchecked")
 		Class<? extends RemoteProxyObject> proxyclass = (Class<? extends RemoteProxyObject>) classdefiner
 				.defineClass(name, ProxyGenerator.generateProxy(name, interfaces,
-						Type.getInternalName(proxyMarkerClass), properties, connection.isStatisticsCollected()));
+						proxyMarkerClass.getName().replace('.', '/'), properties, connection.isStatisticsCollected()));
 
 		//Use method handle to retrieve the initialization static method instead of usual reflection
 		//that is because if we use Class.getMethod(String), then it will load the classes related to the methods
