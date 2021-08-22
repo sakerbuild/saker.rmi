@@ -74,13 +74,14 @@ public class SSLSecurityRMITest extends SakerTestCase {
 	//  Use RSA for the generated key alg
 	//  based on: https://stackoverflow.com/questions/55854904/javax-net-ssl-sslhandshakeexception-no-available-authentication-scheme
 
-	//key generated using
-	//  keytool -genkey -alias test_alias -keystore k1.jks -keyalg RSA -storepass testtest
-	//k1_public.cer exported using
-	//  keytool -export -keystore k1.jks -alias test_alias -file k1_public.cer -storepass testtest
-
-	//  keytool -genkey -alias test_alias -keystore k2.jks -keyalg RSA -storepass testtest
-	//  keytool -export -keystore k2.jks -alias test_alias -file k2_public.cer -storepass testtest
+	//key generated and exported using:
+	/*
+	  keytool -genkey -alias test_alias -keystore k1.jks -keyalg RSA -storepass testtest -dname "CN=k1" -keypass testtest -validity 10000
+	  keytool -export -keystore k1.jks -alias test_alias -file k1_public.cer -storepass testtest
+	
+	  keytool -genkey -alias test_alias -keystore k2.jks -keyalg RSA -storepass testtest -dname "CN=k2" -keypass testtest -validity 10000
+	  keytool -export -keystore k2.jks -alias test_alias -file k2_public.cer -storepass testtest
+	 */
 
 	private static final char[] PASSWORD = "testtest".toCharArray();
 
@@ -133,12 +134,12 @@ public class SSLSecurityRMITest extends SakerTestCase {
 	 * In mst1:
 	 * 
 	 * <pre>
-	 * keytool -genkey -alias server1_alias -keystore ca.jks -keyalg RSA -ext bc:c -dname "CN=server1" -keypass testtest -storepass testtest
+	keytool -genkey -alias server1_alias -keystore ca.jks -keyalg RSA -ext bc:c -dname "CN=server1" -keypass testtest -storepass testtest -validity 10000
 	keytool -keystore ca.jks -alias server1_alias -exportcert -rfc -storepass testtest > ca.pem
-	keytool -genkey -alias client1_alias -keystore client.jks -keyalg RSA -dname "CN=client1" -storepass testtest -keypass testtest
+	keytool -genkey -alias client1_alias -keystore client.jks -keyalg RSA -dname "CN=client1" -storepass testtest -keypass testtest -validity 10000
 	keytool -keystore client.jks -alias client1_alias -exportcert -rfc -storepass testtest > client.pem
 	keytool -keystore client.jks -certreq -alias client1_alias -keyalg rsa -file client.csr -storepass testtest
-	keytool -gencert -keystore ca.jks -alias server1_alias -storepass testtest -infile client.csr -ext ku:c=dig,keyEncipherment -rfc -outfile signed.pem
+	keytool -gencert -keystore ca.jks -alias server1_alias -storepass testtest -infile client.csr -ext ku:c=dig,keyEncipherment -rfc -outfile signed.pem -validity 10000
 	type ca.pem signed.pem > signed_chain.pem
 	copy client.jks client_signed.jks
 	keytool -keystore client_signed.jks -importcert -alias client1_alias -file signed_chain.pem -storepass testtest -noprompt
@@ -147,12 +148,12 @@ public class SSLSecurityRMITest extends SakerTestCase {
 	 * In mst2:
 	 * 
 	 * <pre>
-	keytool -genkey -alias server2_alias -keystore ca.jks -keyalg RSA -ext bc:c -dname "CN=server2" -keypass testtest -storepass testtest
+	keytool -genkey -alias server2_alias -keystore ca.jks -keyalg RSA -ext bc:c -dname "CN=server2" -keypass testtest -storepass testtest -validity 10000
 	keytool -keystore ca.jks -alias server2_alias -exportcert -rfc -storepass testtest > ca.pem
-	keytool -genkey -alias client2_alias -keystore client.jks -keyalg RSA -dname "CN=client2" -storepass testtest -keypass testtest
+	keytool -genkey -alias client2_alias -keystore client.jks -keyalg RSA -dname "CN=client2" -storepass testtest -keypass testtest -validity 10000
 	keytool -keystore client.jks -alias client2_alias -exportcert -rfc -storepass testtest > client.pem
 	keytool -keystore client.jks -certreq -alias client2_alias -keyalg rsa -file client.csr -storepass testtest
-	keytool -gencert -keystore ca.jks -alias server2_alias -storepass testtest -infile client.csr -ext ku:c=dig,keyEncipherment -rfc -outfile signed.pem
+	keytool -gencert -keystore ca.jks -alias server2_alias -storepass testtest -infile client.csr -ext ku:c=dig,keyEncipherment -rfc -outfile signed.pem -validity 10000
 	type ca.pem signed.pem > signed_chain.pem
 	copy client.jks client_signed.jks
 	keytool -keystore client_signed.jks -importcert -alias client2_alias -file signed_chain.pem -storepass testtest -noprompt
@@ -161,9 +162,9 @@ public class SSLSecurityRMITest extends SakerTestCase {
 	 * In mst:
 	 * 
 	 * <pre>
-	 * keytool -export -keystore ../mst1/ca.jks -alias server1_alias -file ca1.cer -storepass testtest
+	keytool -export -keystore ../mst1/ca.jks -alias server1_alias -file ca1.cer -storepass testtest
 	keytool -export -keystore ../mst2/ca.jks -alias server2_alias -file ca2.cer -storepass testtest
-	keytool -genkey -alias servermulti_alias -keystore ca_multi.jks -keyalg RSA -ext bc:c -dname "CN=server_multi" -keypass testtest -storepass testtest
+	keytool -genkey -alias servermulti_alias -keystore ca_multi.jks -keyalg RSA -ext bc:c -dname "CN=server_multi" -keypass testtest -storepass testtest -validity 10000
 	keytool -importcert -file ca1.cer -keystore ca_multi.jks -alias server1_alias -storepass testtest -noprompt
 	keytool -importcert -file ca2.cer -keystore ca_multi.jks -alias server2_alias -storepass testtest -noprompt
 	keytool -export -keystore ca_multi.jks -alias servermulti_alias -file ca_multi.cer -storepass testtest
@@ -216,15 +217,15 @@ public class SSLSecurityRMITest extends SakerTestCase {
 	 * The following commands were used (on Windows) to generate and sign the certificates:
 	 * 
 	 * <pre>
-	 * keytool -genkey -alias server_alias -keystore ca.jks -keyalg RSA -ext bc:c -dname "CN=server" -keypass testtest -storepass testtest
-	 * keytool -keystore ca.jks -alias server_alias -exportcert -rfc -storepass testtest > ca.pem
-	 * keytool -genkey -alias client_alias -keystore client.jks -keyalg RSA -dname "CN=client" -storepass testtest -keypass testtest
-	 * keytool -keystore client.jks -alias client_alias -exportcert -rfc -storepass testtest > client.pem
-	 * keytool -keystore client.jks -certreq -alias client_alias -keyalg rsa -file client.csr -storepass testtest
-	 * keytool -gencert -keystore ca.jks -alias server_alias -storepass testtest -infile client.csr -ext ku:c=dig,keyEncipherment -rfc -outfile signed.pem
-	 * type ca.pem signed.pem > signed_chain.pem
-	 * copy client.jks client_signed.jks
-	 * keytool -keystore client_signed.jks -importcert -alias client_alias -file signed_chain.pem -storepass testtest -noprompt
+	keytool -genkey -alias server_alias -keystore ca.jks -keyalg RSA -ext bc:c -dname "CN=server" -keypass testtest -storepass testtest -validity 10000
+	keytool -keystore ca.jks -alias server_alias -exportcert -rfc -storepass testtest > ca.pem
+	keytool -genkey -alias client_alias -keystore client.jks -keyalg RSA -dname "CN=client" -storepass testtest -keypass testtest -validity 10000
+	keytool -keystore client.jks -alias client_alias -exportcert -rfc -storepass testtest > client.pem
+	keytool -keystore client.jks -certreq -alias client_alias -keyalg rsa -file client.csr -storepass testtest
+	keytool -gencert -keystore ca.jks -alias server_alias -storepass testtest -infile client.csr -ext ku:c=dig,keyEncipherment -rfc -outfile signed.pem -validity 10000
+	type ca.pem signed.pem > signed_chain.pem
+	copy client.jks client_signed.jks
+	keytool -keystore client_signed.jks -importcert -alias client_alias -file signed_chain.pem -storepass testtest -noprompt
 	 * </pre>
 	 * 
 	 * Replace <code>type</code> with <code>cat</code> and <code>copy</code> with <code>cp</code> for Unix based
