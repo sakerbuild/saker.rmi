@@ -3,5 +3,9 @@ global(COMPILER_OPTIONS) = [
 	{
 		Identifier: main-testing,
 		SourceDirectories: path(test/testaccess/)
+	},
+	{
+		SourceVersion: RELEASE_8,
+		TargetVersion: RELEASE_8,
 	}
 ]
