@@ -93,11 +93,27 @@ public class RMIVariables implements AutoCloseable {
 
 	private static final AtomicIntegerFieldUpdater<RMIVariables> AIFU_objectIdProvider = AtomicIntegerFieldUpdater
 			.newUpdater(RMIVariables.class, "objectIdProvider");
-	private static final AtomicIntegerFieldUpdater<RMIVariables> AIFU_ongoingRequestCount = AtomicIntegerFieldUpdater
-			.newUpdater(RMIVariables.class, "ongoingRequestCount");
+
+	private static final AtomicIntegerFieldUpdater<RMIVariables> AIFU_state = AtomicIntegerFieldUpdater
+			.newUpdater(RMIVariables.class, "state");
+	/**
+	 * Flag set in {@link #state} if this {@link RMIVariables} is closed.
+	 */
+	private static final int STATE_BIT_CLOSED = 1 << 31;
+	/**
+	 * Flag set in {@link #state} if this {@link RMIVariables} should be closed after the last ongoing request is done.
+	 */
+	private static final int STATE_BIT_ABORTING = 1 << 30;
+	/**
+	 * Mask for {@link #state} holding the ongoing request count.
+	 */
+	private static final int STATE_MASK_ONGOING_REQUEST_COUNT = (1 << 30) - 1;
 
 	private final RMIConnection connection;
 	private final Object refSync = new Object();
+	/**
+	 * Access while locked on {@link #refSync}.
+	 */
 	private final Map<IdentityEqWeakReference<?>, LocalObjectReference> localObjectsToLocalReferences = new HashMap<>();
 	private final ConcurrentNavigableMap<Integer, LocalObjectReference> localIdentifiersToLocalObjects = new ConcurrentSkipListMap<>();
 
@@ -121,11 +137,14 @@ public class RMIVariables implements AutoCloseable {
 
 	private final WeakReference<RMIVariables> gcThreadThisWeakReference = new WeakReference<>(this, gcReferenceQueue);
 
-	private volatile boolean aborting = false;
-	private volatile boolean closed = false;
-
-	@SuppressWarnings("unused")
-	private volatile int ongoingRequestCount = 0;
+	/**
+	 * Holds the closed, aborting flags and ongoing request count value.
+	 * 
+	 * @see #STATE_BIT_ABORTING
+	 * @see #STATE_BIT_CLOSED
+	 * @see #STATE_MASK_ONGOING_REQUEST_COUNT
+	 */
+	private volatile int state;
 
 	private RMITransferPropertiesHolder properties;
 
@@ -161,7 +180,7 @@ public class RMIVariables implements AutoCloseable {
 	 * @return <code>true</code> if closed.
 	 */
 	public boolean isClosed() {
-		return aborting;
+		return (state & (STATE_BIT_CLOSED | STATE_BIT_ABORTING)) != 0;
 	}
 
 	/**
@@ -184,12 +203,28 @@ public class RMIVariables implements AutoCloseable {
 	 */
 	@Override
 	public void close() {
-		if (aborting) {
-			return;
-		}
-		aborting = true;
-		if (AIFU_ongoingRequestCount.compareAndSet(this, 0, -1)) {
-			closeWithNoOngoingRequest();
+		while (true) {
+			int state = this.state;
+			if (((state & STATE_BIT_ABORTING) == STATE_BIT_ABORTING)) {
+				//already aborting, actual closing is done in either the previous close() call
+				//or when no more requests are ongoing 
+				return;
+			}
+			if ((state & STATE_MASK_ONGOING_REQUEST_COUNT) == 0) {
+				//no ongoing requests, close right away
+				if (!AIFU_state.compareAndSet(this, state, state | STATE_BIT_ABORTING | STATE_BIT_CLOSED)) {
+					//try again
+					continue;
+				}
+				closeWithNoOngoingRequest();
+			} else {
+				//still some ongoing requests, only set aborting flag
+				if (!AIFU_state.compareAndSet(this, state, state | STATE_BIT_ABORTING)) {
+					//try again
+					continue;
+				}
+			}
+			break;
 		}
 	}
 
@@ -848,27 +883,57 @@ public class RMIVariables implements AutoCloseable {
 	}
 
 	boolean isAborting() {
-		return aborting;
+		return (state & STATE_BIT_ABORTING) == STATE_BIT_ABORTING;
 	}
 
 	void addOngoingRequest() {
-		AIFU_ongoingRequestCount.updateAndGet(this, c -> {
-			if (c < 0 || closed) {
+		while (true) {
+			int state = this.state;
+			if ((state & (STATE_BIT_CLOSED | STATE_BIT_ABORTING)) != 0) {
 				throw new RMIIOFailureException("Variables is closed.");
 			}
-			return c + 1;
-		});
+			int c = state & STATE_MASK_ONGOING_REQUEST_COUNT;
+			//keep the flags, add one
+			if (!AIFU_state.compareAndSet(this, state, (state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | (c + 1))) {
+				continue;
+			}
+			return;
+		}
 	}
 
 	void removeOngoingRequest() {
-		int res = AIFU_ongoingRequestCount.updateAndGet(this, c -> {
-			if (c == 1 && aborting) {
-				return -1;
+		while (true) {
+			int state = this.state;
+
+			int c = state & STATE_MASK_ONGOING_REQUEST_COUNT;
+			switch (c) {
+				case 0: {
+					throw new IllegalStateException("No ongoing requests.");
+				}
+				case 1: {
+					if (((state & STATE_BIT_ABORTING) == STATE_BIT_ABORTING)) {
+						//closing as well
+						if (!AIFU_state.compareAndSet(this, state,
+								(state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | STATE_BIT_CLOSED)) {
+							continue;
+						}
+						closeWithNoOngoingRequest();
+						return;
+					}
+					//not closing, clear request count
+					if (!AIFU_state.compareAndSet(this, state, state & ~STATE_MASK_ONGOING_REQUEST_COUNT)) {
+						continue;
+					}
+					return;
+				}
+				default: {
+					//keep the flags, subtract one
+					if (!AIFU_state.compareAndSet(this, state, (state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | (c - 1))) {
+						continue;
+					}
+					return;
+				}
 			}
-			return c - 1;
-		});
-		if (res < 0) {
-			closeWithNoOngoingRequest();
 		}
 	}
 
@@ -1380,9 +1445,10 @@ public class RMIVariables implements AutoCloseable {
 		}
 	}
 
+	/**
+	 * Set {@link #STATE_BIT_CLOSED} before calling this!
+	 */
 	private void closeWithNoOngoingRequest() {
-		closed = true;
-
 		//enqueue a reference to notify the gc thread about exiting
 		gcThreadThisWeakReference.enqueue();
 
