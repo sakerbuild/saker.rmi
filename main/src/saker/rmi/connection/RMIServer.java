@@ -46,6 +46,7 @@ import javax.net.SocketFactory;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
+import saker.rmi.connection.RMIConnection.PendingStreamTracker;
 import saker.util.ObjectUtils;
 import saker.util.io.IOUtils;
 import saker.util.io.SerialUtils;
@@ -1076,7 +1077,7 @@ public class RMIServer implements AutoCloseable {
 		}
 	}
 
-	private static final class StreamConnector implements IOFunction<Collection<? super AutoCloseable>, StreamPair> {
+	private static final class StreamConnector implements IOFunction<PendingStreamTracker, StreamPair> {
 		private final short useVersion;
 		private final UUID uuid;
 		private final SocketFactory socketFactory;
@@ -1094,7 +1095,7 @@ public class RMIServer implements AutoCloseable {
 		}
 
 		@Override
-		public StreamPair apply(Collection<? super AutoCloseable> closer) throws IOException {
+		public StreamPair apply(PendingStreamTracker closer) throws IOException {
 			Socket ssockclose = null;
 			Throwable exc = null;
 			try {
@@ -1104,48 +1105,60 @@ public class RMIServer implements AutoCloseable {
 				} else {
 					sock = socketFactory.createSocket();
 				}
-				closer.add(sock);
 				ssockclose = sock;
+				boolean added = closer.add(sock);
+				if (!added) {
+					//not adding any more streams/sockets, return null
+					return null;
+				}
+				OutputStream ssockout;
+				InputStream ssockin;
+				try {
+					//make this interruptible
+					try (ConnectionInterruptor interruptor = ConnectionInterruptor.create(sock)) {
+						RMIServer.initSocketOptions(sock);
 
-				RMIServer.initSocketOptions(sock);
+						sock.setSoTimeout(handshakeTimeout);
+						sock.connect(address, handshakeTimeout);
 
-				sock.setSoTimeout(handshakeTimeout);
-				sock.connect(address, handshakeTimeout);
+						ssockout = sock.getOutputStream();
+						ssockin = sock.getInputStream();
+						DataOutputStream sdataos = new DataOutputStream(ssockout);
+						DataInputStream sdatais = new DataInputStream(ssockin);
+						sdataos.writeShort(RMIServer.CONNECTION_MAGIC_NUMBER);
+						sdataos.writeShort(useVersion);
+						sdataos.writeShort(RMIServer.COMMAND_NEW_STREAM);
+						sdataos.writeLong(uuid.getMostSignificantBits());
+						sdataos.writeLong(uuid.getLeastSignificantBits());
+						sdataos.flush();
 
-				OutputStream ssockout = sock.getOutputStream();
-				InputStream ssockin = sock.getInputStream();
-				DataOutputStream sdataos = new DataOutputStream(ssockout);
-				DataInputStream sdatais = new DataInputStream(ssockin);
-				sdataos.writeShort(RMIServer.CONNECTION_MAGIC_NUMBER);
-				sdataos.writeShort(useVersion);
-				sdataos.writeShort(RMIServer.COMMAND_NEW_STREAM);
-				sdataos.writeLong(uuid.getMostSignificantBits());
-				sdataos.writeLong(uuid.getLeastSignificantBits());
-				sdataos.flush();
-
-				short smagic = sdatais.readShort();
-				if (smagic != RMIServer.CONNECTION_MAGIC_NUMBER) {
-					if (!(sock instanceof SSLSocket)) {
-						throw new IOException("Invalid magic: 0x" + Integer.toHexString(smagic)
-								+ ", attempting to connect to SSL socket?");
+						short smagic = sdatais.readShort();
+						if (smagic != RMIServer.CONNECTION_MAGIC_NUMBER) {
+							if (!(sock instanceof SSLSocket)) {
+								throw new IOException("Invalid magic: 0x" + Integer.toHexString(smagic)
+										+ ", attempting to connect to SSL socket?");
+							}
+							throw new IOException("Invalid magic: 0x" + Integer.toHexString(smagic));
+						}
+						short sremoteversion = sdatais.readShort();
+						short suseversion = sremoteversion > RMIConnection.PROTOCOL_VERSION_LATEST
+								? RMIConnection.PROTOCOL_VERSION_LATEST
+								: sremoteversion;
+						if (suseversion != useVersion) {
+							throw new IOException("Invalid version detected: 0x" + Integer.toHexString(suseversion));
+						}
+						short response = sdatais.readShort();
+						if (response != RMIServer.COMMAND_NEW_STREAM_RESPONSE) {
+							throw new IOException("Failed to create new stream. Error code: " + response);
+						}
 					}
-					throw new IOException("Invalid magic: 0x" + Integer.toHexString(smagic));
+					sock.setSoTimeout(0);
+					ssockclose = null;
+				} finally {
+					//always remove the socket from the closer after it was successfully added
+					//after we return the streams from the socket, it is no longer our responsibility to close it
+					closer.remove(sock);
 				}
-				short sremoteversion = sdatais.readShort();
-				short suseversion = sremoteversion > RMIConnection.PROTOCOL_VERSION_LATEST
-						? RMIConnection.PROTOCOL_VERSION_LATEST
-						: sremoteversion;
-				if (suseversion != useVersion) {
-					throw new IOException("Invalid version detected: 0x" + Integer.toHexString(suseversion));
-				}
-				short response = sdatais.readShort();
-				if (response != RMIServer.COMMAND_NEW_STREAM_RESPONSE) {
-					throw new IOException("Failed to create new stream. Error code: " + response);
-				}
-
-				sock.setSoTimeout(0);
-				ssockclose = null;
-				closer.remove(sock);
 				return new StreamPair(ssockin, ssockout);
 			} catch (Throwable e) {
 				exc = e;

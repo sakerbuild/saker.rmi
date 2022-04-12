@@ -207,8 +207,7 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	RMIConnection(RMIOptions options, StreamPair streams, short protocolversion,
-			IOFunction<? super Collection<? super AutoCloseable>, ? extends StreamPair> streamconnector)
-			throws IOException {
+			IOFunction<? super PendingStreamTracker, ? extends StreamPair> streamconnector) throws IOException {
 		this.allowDirectRequests = options.allowDirectRequests;
 		if (options.collectStatistics) {
 			this.statistics = new RMIStatistics();
@@ -702,7 +701,7 @@ public final class RMIConnection implements AutoCloseable {
 				getStreamStateModifyLocked().writeVariablesClosed(variables);
 			} catch (IOException | RMIRuntimeException e) {
 			}
-			closeIfAbortingAndNoVariables();
+			closeIfAbortingAndNoVariablesLocked();
 		}
 	}
 
@@ -750,9 +749,9 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	void addStream(RMIStream stream) throws RMIRuntimeException, IOException {
-		checkClosed();
 		synchronized (stateModifyLock) {
 			if (aborting) {
+				//the connection is already aborting, ignore the stream addition, silently close it
 				IOUtils.close(stream);
 				return;
 			}
@@ -968,7 +967,7 @@ public final class RMIConnection implements AutoCloseable {
 	private void closeImpl() {
 		abort();
 		synchronized (stateModifyLock) {
-			closeIfAbortingAndNoVariables();
+			closeIfAbortingAndNoVariablesLocked();
 		}
 	}
 
@@ -996,7 +995,7 @@ public final class RMIConnection implements AutoCloseable {
 		}
 		taskPool.exit();
 		synchronized (stateModifyLock) {
-			closeIfAbortingAndNoVariables();
+			closeIfAbortingAndNoVariablesLocked();
 		}
 	}
 
@@ -1005,7 +1004,7 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	private void postAddAdditionalStreams(
-			IOFunction<? super Collection<? super AutoCloseable>, ? extends StreamPair> streamconnector) {
+			IOFunction<? super PendingStreamTracker, ? extends StreamPair> streamconnector) {
 		taskPool.offer(() -> addAdditionalStreams(streamconnector));
 	}
 
@@ -1042,7 +1041,7 @@ public final class RMIConnection implements AutoCloseable {
 			//this is a hard fallback
 			for (IOErrorListener l : ioerrorlistenerscopy) {
 				try {
-					l.onIOError(exc);
+					l.onIOError(ex);
 				} catch (Exception | LinkageError | StackOverflowError | AssertionError | ServiceConfigurationError
 						| OutOfMemoryError e) {
 					e.printStackTrace();
@@ -1091,7 +1090,10 @@ public final class RMIConnection implements AutoCloseable {
 		return namedVariablesGetLocks.computeIfAbsent(name, Functionals.objectComputer());
 	}
 
-	private void closeIfAbortingAndNoVariables() {
+	/**
+	 * Called with {@link #stateModifyLock} locked.
+	 */
+	private void closeIfAbortingAndNoVariablesLocked() {
 		if (!aborting || !this.variablesByLocalId.isEmpty()) {
 			return;
 		}
@@ -1142,22 +1144,57 @@ public final class RMIConnection implements AutoCloseable {
 		}
 	}
 
-	private void addAdditionalStreams(
-			IOFunction<? super Collection<? super AutoCloseable>, ? extends StreamPair> streamconnector) {
+	private void addAdditionalStreams(IOFunction<? super PendingStreamTracker, ? extends StreamPair> streamconnector) {
+		PendingStreamTracker pendingtracker = new PendingStreamTracker() {
+			@Override
+			public boolean add(AutoCloseable s) {
+				//lock on state modify lock, so if close is being called concurrently,
+				//we still add the socket to the collection
+				synchronized (stateModifyLock) {
+					if (aborting) {
+						return false;
+					}
+					connectingStreamSockets.add(s);
+				}
+				return true;
+			}
+
+			@Override
+			public void remove(AutoCloseable s) {
+				connectingStreamSockets.remove(s);
+			}
+		};
+
 		this.streamAddingThread = new WeakReference<>(Thread.currentThread());
 		try {
 			while (!aborting) {
 				int cocstreams = connectedOrConnectingStreams.getAndIncrement();
-				if (cocstreams < maxStreamCount) {
-					StreamPair streampair = streamconnector.apply(connectingStreamSockets);
-
-					RMIStream nstream = new RMIStream(this, streampair);
-					addStream(nstream);
-				} else {
+				if (cocstreams >= maxStreamCount) {
 					//dont need to connect to any more streams
 					connectedOrConnectingStreams.decrementAndGet();
 					break;
 				}
+
+				StreamPair streampair;
+				try {
+					streampair = streamconnector.apply(pendingtracker);
+				} catch (IOException e) {
+					if (aborting) {
+						//ignorable if we're already aborting
+						break;
+					}
+					throw e;
+				}
+				if (streampair == null) {
+					if (aborting) {
+						//no streams were created, ignorable if aborting
+						break;
+					}
+					throw new NullPointerException("Failed to create RMI stream pair.");
+				}
+
+				RMIStream nstream = new RMIStream(this, streampair);
+				addStream(nstream);
 			}
 		} catch (Exception e) {
 			invokeIOErrorListeners(e, false);
@@ -1172,6 +1209,17 @@ public final class RMIConnection implements AutoCloseable {
 
 	private static ClassLoader defaultedNullClassLoader(ClassLoader nullcl) {
 		return nullcl;
+	}
+
+	interface PendingStreamTracker {
+		/**
+		 * @param s
+		 * @return <code>true</code> if the caller should proceed, <code>false</code> if the RMI connection is closing
+		 *             and caller shouldn't attempt further connections or communication.
+		 */
+		public boolean add(AutoCloseable s);
+
+		public void remove(AutoCloseable s);
 	}
 
 }
