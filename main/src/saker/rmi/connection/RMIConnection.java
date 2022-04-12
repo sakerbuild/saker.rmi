@@ -163,7 +163,6 @@ public final class RMIConnection implements AutoCloseable {
 	private final ConcurrentSkipListMap<String, Object> namedVariablesGetLocks = new ConcurrentSkipListMap<>();
 
 	private final int maxStreamCount;
-	private final ThreadGroup workerThreadGroup;
 
 	private final ConcurrentSkipListMap<String, Object> contextVariables = new ConcurrentSkipListMap<>();
 
@@ -193,14 +192,15 @@ public final class RMIConnection implements AutoCloseable {
 
 		this.properties = properties;
 
-		this.workerThreadGroup = new ThreadGroup(
-				workerThreadGroup == null ? Thread.currentThread().getThreadGroup() : workerThreadGroup,
-				"RMI worker group");
-
 		this.classLoaderResolver = defaultedClassLoaderResolver(options.classLoaderResolver);
 		this.nullClassLoader = defaultedNullClassLoader(options.nullClassLoader);
 		this.maxStreamCount = Math.max(options.getDefaultedMaxStreamCount(), 1);
-		this.taskPool = createWorkPool();
+
+		//create worker subgroup
+		workerThreadGroup = new ThreadGroup(
+				workerThreadGroup == null ? Thread.currentThread().getThreadGroup() : workerThreadGroup,
+				"RMI worker group");
+		this.taskPool = createWorkPool(workerThreadGroup);
 		if (options.collectStatistics) {
 			this.statistics = new RMIStatistics();
 		}
@@ -222,21 +222,22 @@ public final class RMIConnection implements AutoCloseable {
 			ThreadGroup workerThreadGroup = options.workerThreadGroup;
 
 			this.properties = properties;
-			this.workerThreadGroup = new ThreadGroup(
-					workerThreadGroup == null ? Thread.currentThread().getThreadGroup() : workerThreadGroup,
-					"RMI worker group");
 			this.classLoaderResolver = defaultedClassLoaderResolver(classresolver);
 			this.nullClassLoader = defaultedNullClassLoader(options.nullClassLoader);
 			this.maxStreamCount = Math.max(options.getDefaultedMaxStreamCount(), 1);
 			this.protocolVersion = protocolversion;
+
+			//create worker subgroup
+			workerThreadGroup = new ThreadGroup(
+					workerThreadGroup == null ? Thread.currentThread().getThreadGroup() : workerThreadGroup,
+					"RMI worker group");
+			this.taskPool = createWorkPool(workerThreadGroup);
 
 			OutputStream sockout = streams.getOutput();
 			InputStream sockin = streams.getInput();
 
 			RMIStream stream = new RMIStream(this, sockin, sockout);
 			streamclose = stream;
-
-			this.taskPool = createWorkPool();
 			addStream(stream);
 			postAddAdditionalStreams(streamconnector);
 
@@ -999,8 +1000,8 @@ public final class RMIConnection implements AutoCloseable {
 		}
 	}
 
-	private ThreadWorkPool createWorkPool() {
-		return ThreadUtils.newDynamicWorkPool(workerThreadGroup, "RMI-worker-");
+	private static ThreadWorkPool createWorkPool(ThreadGroup threadgroup) {
+		return ThreadUtils.newDynamicWorkPool(threadgroup, "RMI-worker-");
 	}
 
 	private void postAddAdditionalStreams(
