@@ -46,6 +46,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 import saker.rmi.connection.RequestHandler.Request;
 import saker.rmi.exception.RMICallFailedException;
@@ -83,6 +84,9 @@ import saker.util.ref.StrongSoftReference;
 @SuppressWarnings("try")
 final class RMIStream implements Closeable {
 	public static final String EXCEPTION_MESSAGE_DIRECT_REQUESTS_FORBIDDEN = "Direct requests are forbidden.";
+
+	private static final AtomicIntegerFieldUpdater<RMIStream> AIFU_streamCloseWritten = AtomicIntegerFieldUpdater
+			.newUpdater(RMIStream.class, "streamCloseWritten");
 
 	private static final short COMMAND_NEWINSTANCE = 1;
 	private static final short COMMAND_METHODCALL = 2;
@@ -242,7 +246,10 @@ final class RMIStream implements Closeable {
 	protected final BlockOutputStream blockOut;
 	protected final BlockInputStream blockIn;
 
-	protected volatile boolean streamCloseWritten = false;
+	/**
+	 * Boolean as an integer to support atomic operations.
+	 */
+	protected volatile int streamCloseWritten;
 
 	/**
 	 * A non-reentrant lock for accessing the output stream.
@@ -329,7 +336,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeStreamCloseIfNotWritten() throws IOException {
-		if (streamCloseWritten) {
+		if (streamCloseWritten != 0) {
 			return;
 		}
 		outSemaphore.acquireUninterruptibly();
@@ -341,10 +348,9 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeStreamCloseIfNotWrittenLocked() throws IOException {
-		if (streamCloseWritten) {
+		if (!AIFU_streamCloseWritten.compareAndSet(this, 0, 1)) {
 			return;
 		}
-		streamCloseWritten = true;
 		IOException writeexc = null;
 		try {
 			byte[] buf = { (COMMAND_STREAM_CLOSED >>> 8), COMMAND_STREAM_CLOSED };
@@ -2178,7 +2184,7 @@ final class RMIStream implements Closeable {
 				try {
 					readcount = fullblockbuf.readFrom(blockIn);
 				} catch (IOException e) {
-					if (streamCloseWritten) {
+					if (streamCloseWritten != 0) {
 						//the stream is closing. IOException can be ignored
 						//go and close the socket
 						break reader_try;
@@ -2190,7 +2196,7 @@ final class RMIStream implements Closeable {
 					//no more data from the socket
 					//if we're exiting, this is fine, go ahead with closing
 					//if not, then signal with an EOFException that it is unexpected
-					if (!streamCloseWritten) {
+					if (streamCloseWritten == 0) {
 						throw new EOFException("No more data from stream.");
 					}
 					break reader_try;
@@ -2880,7 +2886,7 @@ final class RMIStream implements Closeable {
 	}
 
 	protected void checkClosed() throws RMIIOFailureException {
-		if (streamCloseWritten) {
+		if (streamCloseWritten != 0) {
 			throw new RMIIOFailureException("Stream closed.");
 		}
 	}
