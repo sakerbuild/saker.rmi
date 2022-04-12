@@ -809,8 +809,8 @@ public class RMIServer implements AutoCloseable {
 						: remoteversion;
 				if (useversion <= 0) {
 					//invalid version selected
-					throw new IOException(
-							"Invalid version: 0x" + Integer.toHexString(magic) + " when connecting to: " + address);
+					throw new IOException("Invalid version: 0x" + Integer.toHexString(useversion)
+							+ " when connecting to: " + address);
 				}
 				short cmd = datais.readShort();
 				if (cmd != RMIServer.COMMAND_NEW_CONNECTION_RESPONSE) {
