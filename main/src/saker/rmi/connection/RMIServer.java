@@ -411,19 +411,21 @@ public class RMIServer implements AutoCloseable {
 				dataos.flush();
 				short magic = datais.readShort();
 				if (magic != RMIServer.CONNECTION_MAGIC_NUMBER) {
-					throw new IOException("Invalid magic: 0x" + Integer.toHexString(magic));
+					throw new IOException(
+							"Invalid magic: 0x" + Integer.toHexString(magic) + " when connecting to: " + address);
 				}
 				short remoteversion = datais.readShort();
 				short useversion = remoteversion > RMIConnection.PROTOCOL_VERSION_LATEST
 						? RMIConnection.PROTOCOL_VERSION_LATEST
 						: remoteversion;
 				if (useversion <= 0) {
-					throw new IOException("Invalid version detected: 0x" + Integer.toHexString(useversion));
+					throw new IOException("Invalid version detected: 0x" + Integer.toHexString(useversion)
+							+ " when connecting to: " + address);
 				}
 				short response = datais.readShort();
 				if (response != COMMAND_SHUTDOWN_SERVER_RESPONSE) {
 					throw new RMIShutdownRequestDeniedException(
-							"Failed to shutdown server (response code: " + response + ")", address);
+							"Failed to shutdown server at " + address + " (response code: " + response + ")", address);
 				}
 			} catch (SocketException e) {
 				if (interruptible && Thread.currentThread().isInterrupted()) {
@@ -795,10 +797,11 @@ public class RMIServer implements AutoCloseable {
 				short magic = datais.readShort();
 				if (magic != RMIServer.CONNECTION_MAGIC_NUMBER) {
 					if (!(s instanceof SSLSocket)) {
-						throw new IOException("Invalid magic: 0x" + Integer.toHexString(magic)
-								+ ", attempting to connect to SSL socket?");
+						throw new IOException("Invalid magic: 0x" + Integer.toHexString(magic) + " when connecting to: "
+								+ address + " (attempting to connect to SSL socket?)");
 					}
-					throw new IOException("Invalid magic: 0x" + Integer.toHexString(magic));
+					throw new IOException(
+							"Invalid magic: 0x" + Integer.toHexString(magic) + " when connecting to: " + address);
 				}
 				short remoteversion = datais.readShort();
 				useversion = remoteversion > RMIConnection.PROTOCOL_VERSION_LATEST
@@ -806,7 +809,8 @@ public class RMIServer implements AutoCloseable {
 						: remoteversion;
 				if (useversion <= 0) {
 					//invalid version selected
-					throw new IOException("Invalid version: 0x" + Integer.toHexString(magic));
+					throw new IOException(
+							"Invalid version: 0x" + Integer.toHexString(magic) + " when connecting to: " + address);
 				}
 				short cmd = datais.readShort();
 				if (cmd != RMIServer.COMMAND_NEW_CONNECTION_RESPONSE) {
@@ -1135,21 +1139,25 @@ public class RMIServer implements AutoCloseable {
 						short smagic = sdatais.readShort();
 						if (smagic != RMIServer.CONNECTION_MAGIC_NUMBER) {
 							if (!(sock instanceof SSLSocket)) {
-								throw new IOException("Invalid magic: 0x" + Integer.toHexString(smagic)
-										+ ", attempting to connect to SSL socket?");
+								throw new IOException(
+										"Invalid magic: 0x" + Integer.toHexString(smagic) + " when connecting to: "
+												+ address + " (attempting to connect to SSL socket?)");
 							}
-							throw new IOException("Invalid magic: 0x" + Integer.toHexString(smagic));
+							throw new IOException("Invalid magic: 0x" + Integer.toHexString(smagic)
+									+ " when connecting to: " + address);
 						}
 						short sremoteversion = sdatais.readShort();
 						short suseversion = sremoteversion > RMIConnection.PROTOCOL_VERSION_LATEST
 								? RMIConnection.PROTOCOL_VERSION_LATEST
 								: sremoteversion;
 						if (suseversion != useVersion) {
-							throw new IOException("Invalid version detected: 0x" + Integer.toHexString(suseversion));
+							throw new IOException("Invalid version detected: 0x" + Integer.toHexString(suseversion)
+									+ " when connecting to: " + address);
 						}
 						short response = sdatais.readShort();
 						if (response != RMIServer.COMMAND_NEW_STREAM_RESPONSE) {
-							throw new IOException("Failed to create new stream. Error code: " + response);
+							throw new IOException("Failed to create new stream when connecting to: " + address
+									+ " (Error code: " + response + ")");
 						}
 					}
 					sock.setSoTimeout(0);
