@@ -171,7 +171,7 @@ public class RMIVariables implements AutoCloseable {
 		//dont inline this variable, or this RMIVariables is going to be strong referenced from the thread
 		ReferenceQueue<Object> refqueue = gcReferenceQueue;
 		WeakReference<RMIVariables> ref = gcThreadThisWeakReference;
-		connection.getThreadWorkPool().offer(() -> runGcThread(refqueue, ref));
+		connection.offerVariablesTask(() -> runGcThread(refqueue, ref));
 	}
 
 	/**
