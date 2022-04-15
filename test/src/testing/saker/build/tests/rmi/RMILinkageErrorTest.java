@@ -93,13 +93,13 @@ public class RMILinkageErrorTest extends BaseVariablesRMITestCase {
 	}
 
 	@Override
-	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
+	protected RMIConnection[] createConnections(RMIOptions baseoptions) throws Exception {
 		clientRegistry = new ClassLoaderResolverRegistry();
 		serverRegistry = new ClassLoaderResolverRegistry();
 		return RMITestUtil.createPipedConnection(
-				new RMIOptions().classResolver(clientRegistry).nullClassLoader(RMIConnection.class.getClassLoader())
-						.maxStreamCount(maxthreads),
-				new RMIOptions().classResolver(serverRegistry).nullClassLoader(RMIConnection.class.getClassLoader())
-						.maxStreamCount(maxthreads));
+				new RMIOptions(baseoptions).classResolver(clientRegistry)
+						.nullClassLoader(RMIConnection.class.getClassLoader()),
+				new RMIOptions(baseoptions).classResolver(serverRegistry)
+						.nullClassLoader(RMIConnection.class.getClassLoader()));
 	}
 }

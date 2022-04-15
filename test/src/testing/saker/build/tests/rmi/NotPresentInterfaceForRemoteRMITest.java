@@ -67,12 +67,12 @@ public class NotPresentInterfaceForRemoteRMITest extends BaseVariablesRMITestCas
 	}
 
 	@Override
-	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
+	protected RMIConnection[] createConnections(RMIOptions baseoptions) throws Exception {
 		return RMITestUtil.createPipedConnection(
-				new RMIOptions().classResolver(new SingleClassLoaderResolver("cl", CLIENTCLASSLOADER))
-						.maxStreamCount(maxthreads),
-				new RMIOptions().classResolver(new SingleClassLoaderResolver("cl", SERVERCLASSLOADER))
-						.maxStreamCount(maxthreads));
+				new RMIOptions(baseoptions).nullClassLoader(null)
+						.classResolver(new SingleClassLoaderResolver("cl", CLIENTCLASSLOADER)),
+				new RMIOptions(baseoptions).nullClassLoader(null)
+						.classResolver(new SingleClassLoaderResolver("cl", SERVERCLASSLOADER)));
 	}
 
 }

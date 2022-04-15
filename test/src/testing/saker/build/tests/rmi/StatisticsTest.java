@@ -79,8 +79,7 @@ public class StatisticsTest extends BaseVariablesRMITestCase {
 	}
 
 	@Override
-	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
-		return RMITestUtil.createPipedConnection(new RMIOptions().collectStatistics(true)
-				.classLoader(getClass().getClassLoader()).maxStreamCount(maxthreads));
+	protected RMIConnection[] createConnections(RMIOptions baseoptions) throws Exception {
+		return RMITestUtil.createPipedConnection(new RMIOptions(baseoptions).collectStatistics(true));
 	}
 }

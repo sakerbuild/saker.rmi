@@ -112,7 +112,7 @@ public class RMIClassLookupTest extends BaseVariablesRMITestCase {
 
 		clientRegistry.unregister("subcl", clientsubclresolver);
 		serverRegistry.unregister("subcl", serversubclresolver);
-		
+
 		//no classes should be found from unregistered resolvers
 		assertException(RMICallFailedException.class,
 				() -> clientVariables.newRemoteInstance(clientsubcl.loadClass(Impl2.class.getName())));
@@ -121,16 +121,15 @@ public class RMIClassLookupTest extends BaseVariablesRMITestCase {
 	}
 
 	@Override
-	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
+	protected RMIConnection[] createConnections(RMIOptions baseoptions) throws Exception {
 		clientRegistry = new ClassLoaderResolverRegistry();
 		serverRegistry = new ClassLoaderResolverRegistry();
 		Impl.callCount = 0;
 
-		RMIOptions firstopt = new RMIOptions().classResolver(clientRegistry)
+		RMIOptions firstopt = new RMIOptions(baseoptions).classResolver(clientRegistry)
 				.nullClassLoader(RMIConnection.class.getClassLoader());
-		RMIOptions secondopt = new RMIOptions().classResolver(serverRegistry)
+		RMIOptions secondopt = new RMIOptions(baseoptions).classResolver(serverRegistry)
 				.nullClassLoader(RMIConnection.class.getClassLoader());
-		firstopt.maxStreamCount(maxthreads);
 		return RMITestUtil.createPipedConnection(firstopt, secondopt);
 	}
 }

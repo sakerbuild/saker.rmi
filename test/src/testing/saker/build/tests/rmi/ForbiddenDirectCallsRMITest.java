@@ -59,8 +59,7 @@ public class ForbiddenDirectCallsRMITest extends BaseVariablesRMITestCase {
 	}
 
 	@Override
-	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
-		return RMITestUtil.createPipedConnection(new RMIOptions().classLoader(getClass().getClassLoader())
-				.allowDirectRequests(false).maxStreamCount(maxthreads));
+	protected RMIConnection[] createConnections(RMIOptions baseoptions) throws Exception {
+		return RMITestUtil.createPipedConnection(new RMIOptions(baseoptions).allowDirectRequests(false));
 	}
 }

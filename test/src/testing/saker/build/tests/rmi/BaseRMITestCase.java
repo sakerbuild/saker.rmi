@@ -59,7 +59,10 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 		int maxstreams = getTestMaxStreamCount();
 		for (int i = 1; i <= maxstreams; i++) {
 			System.out.println("RMI test with max stream count: " + i);
-			RMIConnection[] connections = createConnections(i);
+			RMIOptions baseoptions = new RMIOptions().maxStreamCount(maxstreams)
+					.classLoader(getClass().getClassLoader());
+
+			RMIConnection[] connections = createConnections(baseoptions);
 			clientConnection = connections[0];
 			serverConnection = connections[1];
 			try (ResourceCloser closer = new ResourceCloser(connections[0]::closeWait, connections[1]::closeWait)) {
@@ -75,9 +78,8 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 		return Runtime.getRuntime().availableProcessors() * 2;
 	}
 
-	protected RMIConnection[] createConnections(int maxthreads) throws Exception {
-		return RMITestUtil.createPipedConnection(
-				new RMIOptions().classLoader(getClass().getClassLoader()).maxStreamCount(maxthreads));
+	protected RMIConnection[] createConnections(RMIOptions baseoptions) throws Exception {
+		return RMITestUtil.createPipedConnection(new RMIOptions(baseoptions));
 	}
 
 }
