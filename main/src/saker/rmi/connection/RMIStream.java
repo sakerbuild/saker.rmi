@@ -2627,6 +2627,10 @@ final class RMIStream implements Closeable {
 
 			writeMethod(method.getExecutable(), out);
 			writeMethodParameters(variables, method, arguments, out);
+		} finally {
+			//we need a reachability fence for the method arguments, to avoid garbage collection remote object arguments
+			//and thus running into scenarios when we don't find the garbage collected objects on some side
+			ObjectUtils.reachabilityFence(arguments);
 		}
 	}
 
@@ -2648,6 +2652,10 @@ final class RMIStream implements Closeable {
 
 			writeMethod(method.getExecutable(), out);
 			writeMethodParameters(variables, method, arguments, out);
+		} finally {
+			//we need a reachability fence for the method arguments, to avoid garbage collection remote object arguments
+			//and thus running into scenarios when we don't find the garbage collected objects on some side
+			ObjectUtils.reachabilityFence(arguments);
 		}
 	}
 
@@ -2668,6 +2676,10 @@ final class RMIStream implements Closeable {
 
 			writeConstructor(constructor.getExecutable(), out);
 			writeMethodParameters(variables, constructor, arguments, out);
+		} finally {
+			//we need a reachability fence for the method arguments, to avoid garbage collection remote object arguments
+			//and thus running into scenarios when we don't find the garbage collected objects on some side
+			ObjectUtils.reachabilityFence(arguments);
 		}
 	}
 
@@ -2699,6 +2711,10 @@ final class RMIStream implements Closeable {
 				writeObjectUsingWriteHandler(RMIObjectWriteHandler.defaultWriter(), variables, obj, out,
 						ObjectUtils.classOf(obj));
 			}
+		} finally {
+			//we need a reachability fence for the method arguments, to avoid garbage collection remote object arguments
+			//and thus running into scenarios when we don't find the garbage collected objects on some side
+			ObjectUtils.reachabilityFence(arguments);
 		}
 	}
 
@@ -2718,6 +2734,12 @@ final class RMIStream implements Closeable {
 
 			writeObjectUsingWriteHandler(executableproperties.getReturnValueWriter(), variables, returnvalue, out,
 					executableproperties.getReturnType());
+		} finally {
+			//we need a reachability fence for the return value
+			//as if it is a remote object, and is garbage collected before we actually write out the method result,
+			//then the receiving side might get the GC notification before it gets the method result message
+			//and won't find the local reference of this remote object on its side
+			ObjectUtils.reachabilityFence(returnvalue);
 		}
 	}
 
