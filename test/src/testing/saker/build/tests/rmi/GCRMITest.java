@@ -92,5 +92,13 @@ public class GCRMITest extends BaseVariablesRMITestCase {
 
 		return result;
 	}
+	
+	@Override
+	protected BaseRMITestSettings getTestSettings() {
+		BaseRMITestSettings result = super.getTestSettings();
+		//maximize, so the test doesn't take too long
+		result.maxStreamCount = Math.min(result.maxStreamCount, 4);
+		return result;
+	}
 
 }

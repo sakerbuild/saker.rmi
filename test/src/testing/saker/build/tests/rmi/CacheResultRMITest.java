@@ -159,4 +159,12 @@ public class CacheResultRMITest extends BaseVariablesRMITestCase {
 		assertEquals(methodRecursiveCallCount, 3);
 	}
 
+	@Override
+	protected BaseRMITestSettings getTestSettings() {
+		BaseRMITestSettings result = super.getTestSettings();
+		//maximize, so the test doesn't take too long
+		result.maxStreamCount = Math.min(result.maxStreamCount, 4);
+		return result;
+	}
+
 }

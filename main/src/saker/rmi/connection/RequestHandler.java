@@ -18,6 +18,7 @@ package saker.rmi.connection;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
@@ -203,11 +204,13 @@ class RequestHandler implements Closeable {
 	}
 
 	@Override
-	public void close() throws IOException {
-		for (Iterator<Request> it = requests.values().iterator(); it.hasNext();) {
-			Request r = it.next();
-			r.wakeClose();
-			it.remove();
+	public void close() {
+		while (true) {
+			Entry<Integer, Request> entry = requests.pollFirstEntry();
+			if (entry == null) {
+				break;
+			}
+			entry.getValue().wakeClose();
 		}
 	}
 }

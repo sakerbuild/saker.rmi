@@ -100,4 +100,12 @@ public class WeakReferenceClassesRMITest extends BaseRMITestCase {
 		return RMITestUtil.createPipedConnection(new RMIOptions(baseoptions).classResolver(resolver)
 				.nullClassLoader(RMIConnection.class.getClassLoader()));
 	}
+
+	@Override
+	protected BaseRMITestSettings getTestSettings() {
+		BaseRMITestSettings result = super.getTestSettings();
+		//maximize, so the test doesn't take too long
+		result.maxStreamCount = Math.min(result.maxStreamCount, 4);
+		return result;
+	}
 }

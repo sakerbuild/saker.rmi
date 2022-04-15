@@ -27,7 +27,7 @@ public class InterruptRMICallTest extends BaseVariablesRMITestCase {
 	public interface Stub {
 		public default void init() {
 		}
-		
+
 		public void waitInterrupting() throws InterruptedException;
 
 		public void interruptSetting();
@@ -87,7 +87,7 @@ public class InterruptRMICallTest extends BaseVariablesRMITestCase {
 		//as interrupting the current thread may interfere with the class loading of RMI classes
 		//unexpected NoClassDefFoundErrors could be thrown.
 		s.init();
-		
+
 		Thread currentthread = Thread.currentThread();
 		currentthread.interrupt();
 		assertException(InterruptedException.class, s::waitInterrupting);
@@ -140,5 +140,13 @@ public class InterruptRMICallTest extends BaseVariablesRMITestCase {
 
 		//clear the flag after the test
 		Thread.interrupted();
+	}
+
+	@Override
+	protected BaseRMITestSettings getTestSettings() {
+		BaseRMITestSettings result = super.getTestSettings();
+		//maximize, so the test doesn't take too long
+		result.maxStreamCount = Math.min(result.maxStreamCount, 2);
+		return result;
 	}
 }

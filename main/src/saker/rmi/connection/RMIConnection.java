@@ -20,6 +20,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -28,9 +29,11 @@ import java.util.ServiceConfigurationError;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
+import java.util.concurrent.locks.LockSupport;
 
 import saker.rmi.connection.RMIStream.ClassLoaderNotFoundIOException;
 import saker.rmi.exception.RMIIOFailureException;
@@ -42,7 +45,6 @@ import saker.util.ImmutableUtils;
 import saker.util.ObjectUtils;
 import saker.util.classloader.ClassLoaderResolver;
 import saker.util.function.Functionals;
-import saker.util.function.ThrowingRunnable;
 import saker.util.io.DataOutputUnsyncByteArrayOutputStream;
 import saker.util.io.IOUtils;
 import saker.util.io.StreamPair;
@@ -129,14 +131,17 @@ public final class RMIConnection implements AutoCloseable {
 		public void onConnectionClosed();
 	}
 
-	private static final AtomicIntegerFieldUpdater<RMIConnection> ARFU_streamRoundRobin = AtomicIntegerFieldUpdater
+	private static final AtomicIntegerFieldUpdater<RMIConnection> AIFU_streamRoundRobin = AtomicIntegerFieldUpdater
 			.newUpdater(RMIConnection.class, "streamRoundRobin");
-	private static final AtomicIntegerFieldUpdater<RMIConnection> ARFU_offeredStreamTaskCount = AtomicIntegerFieldUpdater
+	private static final AtomicIntegerFieldUpdater<RMIConnection> AIFU_offeredStreamTaskCount = AtomicIntegerFieldUpdater
 			.newUpdater(RMIConnection.class, "offeredStreamTaskCount");
 	private static final AtomicIntegerFieldUpdater<RMIConnection> AIFU_variablesIdentifierCounter = AtomicIntegerFieldUpdater
 			.newUpdater(RMIConnection.class, "variablesIdentifierCounter");
 
-	private final ThreadWorkPool taskPool;
+	private static final AtomicReferenceFieldUpdater<RMIConnection, Thread[]> ARFU_exitWaitThreads = AtomicReferenceFieldUpdater
+			.newUpdater(RMIConnection.class, Thread[].class, "exitWaitThreads");
+
+	private static final Thread[] EXIT_WAIT_THREADS_MARKER_EXITED = {};
 
 	@SuppressWarnings("unused")
 	private volatile int streamRoundRobin;
@@ -175,7 +180,6 @@ public final class RMIConnection implements AutoCloseable {
 	private final ThreadLocal<int[]> currentThreadPreviousMethodCallRequestId = ThreadLocal
 			.withInitial(() -> new int[1]);
 
-	@SuppressWarnings("unused")
 	private volatile int offeredStreamTaskCount;
 
 	private final ConcurrentPrependAccumulator<StrongSoftReference<DataOutputUnsyncByteArrayOutputStream>> bufferCache = new ConcurrentPrependAccumulator<>();
@@ -185,10 +189,23 @@ public final class RMIConnection implements AutoCloseable {
 
 	private RMIStatistics statistics;
 
+	/**
+	 * Only set if the {@link RMIConnection} manages its own task pool, and no {@link Executor} was set via
+	 * {@link RMIOptions}.
+	 */
+	//effectively final
+	private ThreadWorkPool taskPool;
+	//effectively final
+	private Executor taskExecutor;
+
+	/**
+	 * A list of threads that are waiting for the started task threads to exit.
+	 */
+	private volatile Thread[] exitWaitThreads = {};
+
 	RMIConnection(RMIOptions options, short protocolversion) {
 		this.protocolVersion = protocolversion;
 		this.allowDirectRequests = options.allowDirectRequests;
-		ThreadGroup workerThreadGroup = options.workerThreadGroup;
 		RMITransferProperties properties = options.properties;
 
 		this.properties = properties;
@@ -197,14 +214,27 @@ public final class RMIConnection implements AutoCloseable {
 		this.nullClassLoader = defaultedNullClassLoader(options.nullClassLoader);
 		this.maxStreamCount = Math.max(options.getDefaultedMaxStreamCount(), 1);
 
+		initTaskFields(options);
+		if (options.collectStatistics) {
+			this.statistics = new RMIStatistics();
+		}
+	}
+
+	private void initTaskFields(RMIOptions options) {
+		Executor executor = options.executor;
+		if (executor != null) {
+			this.taskExecutor = executor;
+			return;
+		}
+
+		ThreadGroup workerThreadGroup = options.workerThreadGroup;
 		//create worker subgroup
 		workerThreadGroup = new ThreadGroup(
 				workerThreadGroup == null ? Thread.currentThread().getThreadGroup() : workerThreadGroup,
 				"RMI worker group");
-		this.taskPool = createWorkPool(workerThreadGroup);
-		if (options.collectStatistics) {
-			this.statistics = new RMIStatistics();
-		}
+		ThreadWorkPool taskpool = createWorkPool(workerThreadGroup);
+		this.taskPool = taskpool;
+		this.taskExecutor = r -> taskpool.offer(r::run);
 	}
 
 	RMIConnection(RMIOptions options, StreamPair streams, short protocolversion,
@@ -220,7 +250,6 @@ public final class RMIConnection implements AutoCloseable {
 			Objects.requireNonNull(streamconnector, "stream connector");
 			ClassLoaderResolver classresolver = options.classLoaderResolver;
 			RMITransferProperties properties = options.properties;
-			ThreadGroup workerThreadGroup = options.workerThreadGroup;
 
 			this.properties = properties;
 			this.classLoaderResolver = defaultedClassLoaderResolver(classresolver);
@@ -228,17 +257,16 @@ public final class RMIConnection implements AutoCloseable {
 			this.maxStreamCount = Math.max(options.getDefaultedMaxStreamCount(), 1);
 			this.protocolVersion = protocolversion;
 
-			//create worker subgroup
-			workerThreadGroup = new ThreadGroup(
-					workerThreadGroup == null ? Thread.currentThread().getThreadGroup() : workerThreadGroup,
-					"RMI worker group");
-			this.taskPool = createWorkPool(workerThreadGroup);
+			initTaskFields(options);
 
 			OutputStream sockout = streams.getOutput();
 			InputStream sockin = streams.getInput();
 
 			RMIStream stream = new RMIStream(this, sockin, sockout);
 			streamclose = stream;
+
+			AIFU_offeredStreamTaskCount.incrementAndGet(this);
+
 			addStream(stream);
 			postAddAdditionalStreams(streamconnector);
 
@@ -574,9 +602,71 @@ public final class RMIConnection implements AutoCloseable {
 	 */
 	public void closeWait() throws IOException, InterruptedException {
 		closeImpl();
-		try {
-			taskPool.closeInterruptible();
-		} catch (ParallelExecutionException e) {
+		waitRMITasks();
+	}
+
+	private void waitRMITasks() throws InterruptedException {
+		if (taskPool != null) {
+			try {
+				taskPool.closeInterruptible();
+			} catch (ParallelExecutionException e) {
+			}
+			return;
+		}
+		//add the current thread to the waiting threads
+		//(some part of the loops are unrolled, that's why this code looks like it does)
+		Thread[] threads = this.exitWaitThreads;
+		if (threads == EXIT_WAIT_THREADS_MARKER_EXITED) {
+			return;
+		}
+		Thread currentthread = Thread.currentThread();
+		while (true) {
+			Thread[] nthreads = ArrayUtils.appended(threads, currentthread);
+			if (ARFU_exitWaitThreads.compareAndSet(this, threads, nthreads)) {
+				threads = nthreads;
+				break;
+			}
+			threads = this.exitWaitThreads;
+			if (threads == EXIT_WAIT_THREADS_MARKER_EXITED) {
+				return;
+			}
+		}
+		//our thread has been added to the exit thread array
+		while (true) {
+			threads = this.exitWaitThreads;
+			if (threads == EXIT_WAIT_THREADS_MARKER_EXITED) {
+				return;
+			}
+			if (Thread.interrupted()) {
+				//the thread got interrupted
+				//remove the current thread from the threads array and throw an exception
+				for (int i = 0; i < threads.length;) {
+					if (threads[i] != currentthread) {
+						i++;
+						continue;
+					}
+					Thread[] nthreads = ArrayUtils.removedAtIndex(threads, i);
+					if (ARFU_exitWaitThreads.compareAndSet(this, threads, nthreads)) {
+						//successful removal, throw the exception
+						throw new InterruptedException("Waiting for RMI tasks interrupted.");
+					}
+					//failed to update the threads variable, re-read it again, and restart the loop
+					threads = this.exitWaitThreads;
+					if (threads == EXIT_WAIT_THREADS_MARKER_EXITED) {
+						//the tasks exited meanwhile, so we can ignore the interruption, and exit successfully
+						//reinterrupt, as we consumed it in the call above
+						currentthread.interrupt();
+						return;
+					}
+					//reinit iter variable
+					i = 0;
+				}
+				throw new IllegalStateException(
+						"Internal consistency error: Current thread not found in waiter threads when waiting for RMI tasks. Current thread: "
+								+ currentthread + " Threads: " + Arrays.toString(threads));
+
+			}
+			LockSupport.park();
 		}
 	}
 
@@ -735,26 +825,36 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	void offerStreamTask(Runnable task) {
-		ARFU_offeredStreamTaskCount.incrementAndGet(this);
-		taskPool.offer(() -> {
+		AIFU_offeredStreamTaskCount.incrementAndGet(this);
+		this.taskExecutor.execute(() -> {
 			Thread.currentThread().setContextClassLoader(null);
 			try {
 				task.run();
 			} finally {
-				int c = ARFU_offeredStreamTaskCount.decrementAndGet(this);
+				int c = AIFU_offeredStreamTaskCount.decrementAndGet(this);
 				if (c == 0) {
-					//this was the last stream task to run
-					//stream reading tasks have already exited (or this was it)
-					//no streams running -> no more requests will be added
-					//close the request handler as it will not receive responses anymore
-					requestHandler.close();
+					handleNoMoreRunningStreamTasks();
 				}
 			}
 		});
 	}
 
-	void offerVariablesTask(ThrowingRunnable task) {
-		taskPool.offer(task);
+	void offerVariablesTask(Runnable task) {
+		offerStreamTask(task);
+	}
+
+	private void handleNoMoreRunningStreamTasks() {
+		//this was the last stream task to run
+		//stream reading tasks have already exited (or this was it)
+		//no streams running -> no more requests will be added
+		//close the request handler as it will not receive responses anymore
+		requestHandler.close();
+
+		//unpark the possibly waiting threads
+		Thread[] threads = ARFU_exitWaitThreads.getAndSet(this, EXIT_WAIT_THREADS_MARKER_EXITED);
+		for (int i = 0; i < threads.length; i++) {
+			LockSupport.unpark(threads[i]);
+		}
 	}
 
 	StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> getCachedByteBuffer() {
@@ -812,7 +912,7 @@ public final class RMIConnection implements AutoCloseable {
 		if (allStreams.isEmpty()) {
 			throw new RMIIOFailureException("No stream found.");
 		}
-		return allStreams.get(ARFU_streamRoundRobin.getAndIncrement(this) % allStreams.size());
+		return allStreams.get(AIFU_streamRoundRobin.getAndIncrement(this) % allStreams.size());
 	}
 
 	void clientClose() {
@@ -1031,7 +1131,9 @@ public final class RMIConnection implements AutoCloseable {
 				v.close();
 			}
 		}
-		taskPool.exit();
+		if (taskPool != null) {
+			taskPool.exit();
+		}
 		if (emptyvars) {
 			//variables are empty
 			//we need to call closeIfAbortingAndNoVariablesLocked() in this branch
@@ -1051,9 +1153,20 @@ public final class RMIConnection implements AutoCloseable {
 		return ThreadUtils.newDynamicWorkPool(threadgroup, "RMI-worker-");
 	}
 
+	/**
+	 * Increment {@link #offeredStreamTaskCount} before calling this.
+	 */
 	private void postAddAdditionalStreams(
 			IOFunction<? super PendingStreamTracker, ? extends StreamPair> streamconnector) {
-		taskPool.offer(() -> addAdditionalStreams(streamconnector));
+		this.taskExecutor.execute(() -> {
+			try {
+				addAdditionalStreams(streamconnector);
+			} finally {
+				if (AIFU_offeredStreamTaskCount.decrementAndGet(this) == 0) {
+					handleNoMoreRunningStreamTasks();
+				}
+			}
+		});
 	}
 
 	void invokeIOErrorListeners(Throwable exc, boolean storeexception) {

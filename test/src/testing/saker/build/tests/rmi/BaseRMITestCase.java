@@ -16,6 +16,7 @@
 package testing.saker.build.tests.rmi;
 
 import java.util.Map;
+import java.util.concurrent.Executor;
 
 import saker.rmi.connection.RMIConnection;
 import saker.rmi.connection.RMIOptions;
@@ -56,30 +57,69 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 
 	@SuppressWarnings("try")
 	private void connectAndRunTest() throws Exception {
-		int maxstreams = getTestMaxStreamCount();
-		for (int i = 1; i <= maxstreams; i++) {
-			System.out.println("RMI test with max stream count: " + i);
-			RMIOptions baseoptions = new RMIOptions().maxStreamCount(maxstreams)
-					.classLoader(getClass().getClassLoader());
-
-			RMIConnection[] connections = createConnections(baseoptions);
-			clientConnection = connections[0];
-			serverConnection = connections[1];
-			try (ResourceCloser closer = new ResourceCloser(connections[0]::closeWait, connections[1]::closeWait)) {
-				runTestImpl();
-			} finally {
-				clientConnection = null;
-				serverConnection = null;
-			}
+		BaseRMITestSettings settings = getTestSettings();
+		int minstreams = settings.minStreamCount;
+		int maxstreams = settings.maxStreamCount;
+		if (minstreams < 1) {
+			minstreams = 1;
 		}
-	}
+		if (maxstreams < 0) {
+			maxstreams = BaseRMITestSettings.DEFAULT_MAX_STREAM_COUNT;
+		}
+		assertTrue(minstreams <= maxstreams, minstreams + " > " + maxstreams);
+		for (int i = minstreams; i <= maxstreams; i++) {
+			System.out.println("RMI test with max stream count: " + i);
 
-	protected int getTestMaxStreamCount() {
-		return Runtime.getRuntime().availableProcessors() * 2;
+			Executor[] executors = settings.executors;
+			if (executors == null) {
+				//test with multiple different executors by default
+				//    null for the built-in task scheduling
+				//    simple new thread / task executor
+				executors = new Executor[] { null, new ThreadExecutor(), };
+			}
+
+			for (Executor executor : executors) {
+				RMIOptions baseoptions = new RMIOptions().maxStreamCount(maxstreams)
+						.classLoader(getClass().getClassLoader());
+				if (executor != null) {
+					baseoptions.executor(executor);
+				}
+
+				RMIConnection[] connections = createConnections(baseoptions);
+				clientConnection = connections[0];
+				serverConnection = connections[1];
+				try (ResourceCloser closer = new ResourceCloser(connections[0]::closeWait, connections[1]::closeWait)) {
+					runTestImpl();
+				} finally {
+					clientConnection = null;
+					serverConnection = null;
+				}
+			}
+
+		}
 	}
 
 	protected RMIConnection[] createConnections(RMIOptions baseoptions) throws Exception {
 		return RMITestUtil.createPipedConnection(new RMIOptions(baseoptions));
 	}
 
+	protected BaseRMITestSettings getTestSettings() {
+		return new BaseRMITestSettings();
+	}
+
+	private static final class ThreadExecutor implements Executor {
+		@Override
+		public void execute(Runnable command) {
+			new Thread(command).start();
+		}
+	}
+
+	public static class BaseRMITestSettings {
+		public static final int DEFAULT_MAX_STREAM_COUNT = Runtime.getRuntime().availableProcessors() * 2;
+
+		public int minStreamCount = 1;
+		public int maxStreamCount = DEFAULT_MAX_STREAM_COUNT;
+
+		public Executor[] executors;
+	}
 }
