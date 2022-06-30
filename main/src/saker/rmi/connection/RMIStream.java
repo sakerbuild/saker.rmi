@@ -167,76 +167,76 @@ final class RMIStream implements Closeable {
 	private static final short FIELD_DETAILS = 0;
 	private static final short FIELD_INDEX = 1;
 
-	private static final Map<Short, IOTriFunction<RMIStream, RMIVariables, DataInputUnsyncByteArrayInputStream, Object>> OBJECT_READERS = new HashMap<>(
-			OBJECT_READER_END_VALUE * 2);
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	private static final IOTriFunction<RMIStream, RMIVariables, DataInputUnsyncByteArrayInputStream, Object>[] OBJECT_READERS = new IOTriFunction[OBJECT_READER_END_VALUE];
 	private static final IOTriFunction<RMIStream, RMIVariables, DataInputUnsyncByteArrayInputStream, Object> OBJECT_READER_UNKNOWN = (
 			s, vars, in) -> {
 		throw new RMICallFailedException("Unknown object type.");
 	};
 	static {
-		OBJECT_READERS.put(OBJECT_NULL, (s, vars, in) -> null);
-		OBJECT_READERS.put(OBJECT_BOOLEAN, (s, vars, in) -> in.readBoolean());
-		OBJECT_READERS.put(OBJECT_BYTE, (s, vars, in) -> in.readByte());
-		OBJECT_READERS.put(OBJECT_SHORT, (s, vars, in) -> in.readShort());
-		OBJECT_READERS.put(OBJECT_INT, (s, vars, in) -> in.readInt());
-		OBJECT_READERS.put(OBJECT_LONG, (s, vars, in) -> in.readLong());
-		OBJECT_READERS.put(OBJECT_FLOAT, (s, vars, in) -> in.readFloat());
-		OBJECT_READERS.put(OBJECT_DOUBLE, (s, vars, in) -> in.readDouble());
-		OBJECT_READERS.put(OBJECT_CHAR, (s, vars, in) -> in.readChar());
-		OBJECT_READERS.put(OBJECT_STRING, (s, vars, in) -> readString(in));
-		OBJECT_READERS.put(OBJECT_ARRAY, RMIStream::readObjectArray);
-		OBJECT_READERS.put(OBJECT_ENUM, (s, vars, in) -> s.readEnum(in));
-		OBJECT_READERS.put(OBJECT_REMOTE, (s, vars, in) -> readRemoteObject(vars, in));
-		OBJECT_READERS.put(OBJECT_NEW_REMOTE, RMIStream::readNewRemoteObject);
-		OBJECT_READERS.put(OBJECT_EXTERNALIZABLE, RMIStream::readExternalizableObject);
-		OBJECT_READERS.put(OBJECT_CLASS, (s, vars, in) -> s.readClass(in).get(vars.getConnection()));
-		OBJECT_READERS.put(OBJECT_METHOD, (s, vars, in) -> s.readMethod(in, null));
-		OBJECT_READERS.put(OBJECT_CONSTRUCTOR, (s, vars, in) -> s.readConstructor(in));
-		OBJECT_READERS.put(OBJECT_SERIALIZED, (s, vars, in) -> s.readSerializedObject(in));
-		OBJECT_READERS.put(OBJECT_WRAPPER, RMIStream::readWrappedObject);
+		OBJECT_READERS[OBJECT_NULL] = (s, vars, in) -> null;
+		OBJECT_READERS[OBJECT_BOOLEAN] = (s, vars, in) -> in.readBoolean();
+		OBJECT_READERS[OBJECT_BYTE] = (s, vars, in) -> in.readByte();
+		OBJECT_READERS[OBJECT_SHORT] = (s, vars, in) -> in.readShort();
+		OBJECT_READERS[OBJECT_INT] = (s, vars, in) -> in.readInt();
+		OBJECT_READERS[OBJECT_LONG] = (s, vars, in) -> in.readLong();
+		OBJECT_READERS[OBJECT_FLOAT] = (s, vars, in) -> in.readFloat();
+		OBJECT_READERS[OBJECT_DOUBLE] = (s, vars, in) -> in.readDouble();
+		OBJECT_READERS[OBJECT_CHAR] = (s, vars, in) -> in.readChar();
+		OBJECT_READERS[OBJECT_STRING] = (s, vars, in) -> readString(in);
+		OBJECT_READERS[OBJECT_ARRAY] = RMIStream::readObjectArray;
+		OBJECT_READERS[OBJECT_ENUM] = (s, vars, in) -> s.readEnum(in);
+		OBJECT_READERS[OBJECT_REMOTE] = (s, vars, in) -> readRemoteObject(vars, in);
+		OBJECT_READERS[OBJECT_NEW_REMOTE] = RMIStream::readNewRemoteObject;
+		OBJECT_READERS[OBJECT_EXTERNALIZABLE] = RMIStream::readExternalizableObject;
+		OBJECT_READERS[OBJECT_CLASS] = (s, vars, in) -> s.readClass(in).get(vars.getConnection());
+		OBJECT_READERS[OBJECT_METHOD] = (s, vars, in) -> s.readMethod(in, null);
+		OBJECT_READERS[OBJECT_CONSTRUCTOR] = (s, vars, in) -> s.readConstructor(in);
+		OBJECT_READERS[OBJECT_SERIALIZED] = (s, vars, in) -> s.readSerializedObject(in);
+		OBJECT_READERS[OBJECT_WRAPPER] = RMIStream::readWrappedObject;
 
-		OBJECT_READERS.put(OBJECT_BYTE_ARRAY, (s, vars, in) -> readObjectByteArray(in));
-		OBJECT_READERS.put(OBJECT_SHORT_ARRAY, (s, vars, in) -> readObjectShortArray(in));
-		OBJECT_READERS.put(OBJECT_INT_ARRAY, (s, vars, in) -> readObjectIntArray(in));
-		OBJECT_READERS.put(OBJECT_LONG_ARRAY, (s, vars, in) -> readObjectLongArray(in));
-		OBJECT_READERS.put(OBJECT_FLOAT_ARRAY, (s, vars, in) -> readObjectFloatArray(in));
-		OBJECT_READERS.put(OBJECT_DOUBLE_ARRAY, (s, vars, in) -> readObjectDoubleArray(in));
-		OBJECT_READERS.put(OBJECT_BOOLEAN_ARRAY, (s, vars, in) -> readObjectBooleanArray(in));
-		OBJECT_READERS.put(OBJECT_CHAR_ARRAY, (s, vars, in) -> readObjectCharArray(in));
-		OBJECT_READERS.put(OBJECT_CLASSLOADER, (s, vars, in) -> s.readClassLoader(in).get(vars.getConnection()));
-		OBJECT_READERS.put(OBJECT_FIELD, (s, vars, in) -> s.readField(in, null));
+		OBJECT_READERS[OBJECT_BYTE_ARRAY] = (s, vars, in) -> readObjectByteArray(in);
+		OBJECT_READERS[OBJECT_SHORT_ARRAY] = (s, vars, in) -> readObjectShortArray(in);
+		OBJECT_READERS[OBJECT_INT_ARRAY] = (s, vars, in) -> readObjectIntArray(in);
+		OBJECT_READERS[OBJECT_LONG_ARRAY] = (s, vars, in) -> readObjectLongArray(in);
+		OBJECT_READERS[OBJECT_FLOAT_ARRAY] = (s, vars, in) -> readObjectFloatArray(in);
+		OBJECT_READERS[OBJECT_DOUBLE_ARRAY] = (s, vars, in) -> readObjectDoubleArray(in);
+		OBJECT_READERS[OBJECT_BOOLEAN_ARRAY] = (s, vars, in) -> readObjectBooleanArray(in);
+		OBJECT_READERS[OBJECT_CHAR_ARRAY] = (s, vars, in) -> readObjectCharArray(in);
+		OBJECT_READERS[OBJECT_CLASSLOADER] = (s, vars, in) -> s.readClassLoader(in).get(vars.getConnection());
+		OBJECT_READERS[OBJECT_FIELD] = (s, vars, in) -> s.readField(in, null);
 	}
-	private static final Map<Short, IOBiConsumer<RMIStream, DataInputUnsyncByteArrayInputStream>> COMMAND_HANDLERS = new HashMap<>(
-			COMMAND_END_VALUE * 2);
+
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	private static final IOBiConsumer<RMIStream, DataInputUnsyncByteArrayInputStream>[] COMMAND_HANDLERS = new IOBiConsumer[COMMAND_END_VALUE];
 	static {
-		COMMAND_HANDLERS.put(COMMAND_NEWINSTANCE, RMIStream::handleCommandNewInstance);
-		COMMAND_HANDLERS.put(COMMAND_NEWINSTANCE_REDISPATCH, RMIStream::handleCommandNewInstanceRedispatch);
-		COMMAND_HANDLERS.put(COMMAND_NEWINSTANCE_UNKNOWNCLASS, RMIStream::handleCommandNewInstanceUnknownClass);
-		COMMAND_HANDLERS.put(COMMAND_NEWINSTANCE_UNKNOWNCLASS_REDISPATCH,
-				RMIStream::handleCommandNewInstanceUnknownClassRedispatch);
-		COMMAND_HANDLERS.put(COMMAND_METHODCALL, RMIStream::handleCommandMethodCall);
-		COMMAND_HANDLERS.put(COMMAND_METHODCALL_REDISPATCH, RMIStream::handleCommandMethodCallRedispatch);
-		COMMAND_HANDLERS.put(COMMAND_METHODRESULT, RMIStream::handleCommandMethodResult);
-		COMMAND_HANDLERS.put(COMMAND_UNKNOWN_NEWINSTANCE_RESULT, RMIStream::handleCommandNewInstanceUnknownClassResult);
-		COMMAND_HANDLERS.put(COMMAND_METHODRESULT_FAIL, RMIStream::handleCommandMethodResultFailure);
-		COMMAND_HANDLERS.put(COMMAND_NEWINSTANCERESULT_FAIL, RMIStream::handleCommandNewInstanceResultFailure);
-		COMMAND_HANDLERS.put(COMMAND_NEW_VARIABLES, RMIStream::handleCommandNewVariables);
-		COMMAND_HANDLERS.put(COMMAND_GET_CONTEXT_VAR, RMIStream::handleCommandGetContextVariable);
-		COMMAND_HANDLERS.put(COMMAND_GET_CONTEXT_VAR_RESPONSE, RMIStream::handleCommandGetContextVariableResult);
-		COMMAND_HANDLERS.put(COMMAND_NEWINSTANCE_RESULT, RMIStream::handleCommandNewInstanceResult);
-		COMMAND_HANDLERS.put(COMMAND_NEW_VARIABLES_RESULT, RMIStream::handleCommandNewVariablesResult);
-		COMMAND_HANDLERS.put(COMMAND_REFERENCES_RELEASED, RMIStream::handleCommandReferencesReleased);
-		COMMAND_HANDLERS.put(COMMAND_CLOSE_VARIABLES, RMIStream::handleCommandCloseVariables);
-		COMMAND_HANDLERS.put(COMMAND_PING, RMIStream::handleCommandPing);
-		COMMAND_HANDLERS.put(COMMAND_PONG, RMIStream::handleCommandPong);
-		COMMAND_HANDLERS.put(COMMAND_CACHED_CLASS, RMIStream::handleCommandCachedClass);
-		COMMAND_HANDLERS.put(COMMAND_CACHED_CONSTRUCTOR, RMIStream::handleCommandCachedConstructor);
-		COMMAND_HANDLERS.put(COMMAND_CACHED_CLASSLOADER, RMIStream::handleCommandCachedClassLoader);
-		COMMAND_HANDLERS.put(COMMAND_CACHED_METHOD, RMIStream::handleCommandCachedMethod);
-		COMMAND_HANDLERS.put(COMMAND_CACHED_FIELD, RMIStream::handleCommandCachedField);
-		COMMAND_HANDLERS.put(COMMAND_INTERRUPT_REQUEST, RMIStream::handleCommandInterruptRequest);
-		COMMAND_HANDLERS.put(COMMAND_DIRECT_REQUEST_FORBIDDEN, RMIStream::handleCommandDirectRequestForbidden);
-		COMMAND_HANDLERS.put(COMMAND_METHODCALL_ASYNC, RMIStream::handleCommandMethodCallAsync);
+		COMMAND_HANDLERS[COMMAND_NEWINSTANCE] = RMIStream::handleCommandNewInstance;
+		COMMAND_HANDLERS[COMMAND_NEWINSTANCE_REDISPATCH] = RMIStream::handleCommandNewInstanceRedispatch;
+		COMMAND_HANDLERS[COMMAND_NEWINSTANCE_UNKNOWNCLASS] = RMIStream::handleCommandNewInstanceUnknownClass;
+		COMMAND_HANDLERS[COMMAND_NEWINSTANCE_UNKNOWNCLASS_REDISPATCH] = RMIStream::handleCommandNewInstanceUnknownClassRedispatch;
+		COMMAND_HANDLERS[COMMAND_METHODCALL] = RMIStream::handleCommandMethodCall;
+		COMMAND_HANDLERS[COMMAND_METHODCALL_REDISPATCH] = RMIStream::handleCommandMethodCallRedispatch;
+		COMMAND_HANDLERS[COMMAND_METHODRESULT] = RMIStream::handleCommandMethodResult;
+		COMMAND_HANDLERS[COMMAND_UNKNOWN_NEWINSTANCE_RESULT] = RMIStream::handleCommandNewInstanceUnknownClassResult;
+		COMMAND_HANDLERS[COMMAND_METHODRESULT_FAIL] = RMIStream::handleCommandMethodResultFailure;
+		COMMAND_HANDLERS[COMMAND_NEWINSTANCERESULT_FAIL] = RMIStream::handleCommandNewInstanceResultFailure;
+		COMMAND_HANDLERS[COMMAND_NEW_VARIABLES] = RMIStream::handleCommandNewVariables;
+		COMMAND_HANDLERS[COMMAND_GET_CONTEXT_VAR] = RMIStream::handleCommandGetContextVariable;
+		COMMAND_HANDLERS[COMMAND_GET_CONTEXT_VAR_RESPONSE] = RMIStream::handleCommandGetContextVariableResult;
+		COMMAND_HANDLERS[COMMAND_NEWINSTANCE_RESULT] = RMIStream::handleCommandNewInstanceResult;
+		COMMAND_HANDLERS[COMMAND_NEW_VARIABLES_RESULT] = RMIStream::handleCommandNewVariablesResult;
+		COMMAND_HANDLERS[COMMAND_REFERENCES_RELEASED] = RMIStream::handleCommandReferencesReleased;
+		COMMAND_HANDLERS[COMMAND_CLOSE_VARIABLES] = RMIStream::handleCommandCloseVariables;
+		COMMAND_HANDLERS[COMMAND_PING] = RMIStream::handleCommandPing;
+		COMMAND_HANDLERS[COMMAND_PONG] = RMIStream::handleCommandPong;
+		COMMAND_HANDLERS[COMMAND_CACHED_CLASS] = RMIStream::handleCommandCachedClass;
+		COMMAND_HANDLERS[COMMAND_CACHED_CONSTRUCTOR] = RMIStream::handleCommandCachedConstructor;
+		COMMAND_HANDLERS[COMMAND_CACHED_CLASSLOADER] = RMIStream::handleCommandCachedClassLoader;
+		COMMAND_HANDLERS[COMMAND_CACHED_METHOD] = RMIStream::handleCommandCachedMethod;
+		COMMAND_HANDLERS[COMMAND_CACHED_FIELD] = RMIStream::handleCommandCachedField;
+		COMMAND_HANDLERS[COMMAND_INTERRUPT_REQUEST] = RMIStream::handleCommandInterruptRequest;
+		COMMAND_HANDLERS[COMMAND_DIRECT_REQUEST_FORBIDDEN] = RMIStream::handleCommandDirectRequestForbidden;
+		COMMAND_HANDLERS[COMMAND_METHODCALL_ASYNC] = RMIStream::handleCommandMethodCallAsync;
 	}
 
 	protected final RMIConnection connection;
@@ -1009,7 +1009,15 @@ final class RMIStream implements Closeable {
 
 	Object readObject(RMIVariables vars, DataInputUnsyncByteArrayInputStream in) throws IOException {
 		short type = in.readShort();
-		return OBJECT_READERS.getOrDefault(type, OBJECT_READER_UNKNOWN).accept(this, vars, in);
+		IOTriFunction<RMIStream, RMIVariables, DataInputUnsyncByteArrayInputStream, Object> reader;
+		try {
+			reader = OBJECT_READERS[type];
+		} catch (ArrayIndexOutOfBoundsException e) {
+			// should happen very rarely, only when an unknown type is sent.
+			// so its probably more efficient (?) to handle in a try-catch, than by using an if-else
+			reader = OBJECT_READER_UNKNOWN;
+		}
+		return reader.accept(this, vars, in);
 	}
 
 	private void writeClass(Class<?> clazz, DataOutputUnsyncByteArrayOutputStream out) {
@@ -2164,7 +2172,14 @@ final class RMIStream implements Closeable {
 	}
 
 	private void handleCommand(short command, DataInputUnsyncByteArrayInputStream in) throws IOException {
-		IOBiConsumer<RMIStream, DataInputUnsyncByteArrayInputStream> handler = COMMAND_HANDLERS.get(command);
+		IOBiConsumer<RMIStream, DataInputUnsyncByteArrayInputStream> handler;
+		try {
+			handler = COMMAND_HANDLERS[command];
+		} catch (ArrayIndexOutOfBoundsException e) {
+			// should happen very rarely, only when an unknown command is sent.
+			// so its probably more efficient (?) to handle in a try-catch, than by using an if-else
+			handler = null;
+		}
 		if (handler == null) {
 			handleUnknownCommand(command, in);
 		} else {
@@ -2277,7 +2292,7 @@ final class RMIStream implements Closeable {
 
 	void writeCommandReferencesReleased(RMIVariables variables, int remoteid, int count) throws IOException {
 		if (count <= 0) {
-			throw new RMICallFailedException("Count must be greater than zero: " + count);
+			throw new IllegalArgumentException("Count must be greater than zero: " + count);
 		}
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
