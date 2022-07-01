@@ -17,7 +17,6 @@ package saker.rmi.connection;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.Iterator;
 import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
@@ -65,6 +64,18 @@ class RequestHandler implements Closeable {
 				return this;
 			}
 
+			@Override
+			public String toString() {
+				StringBuilder builder = new StringBuilder();
+				builder.append("State[closed=");
+				builder.append(closed);
+				builder.append(", response=");
+				builder.append(response);
+				builder.append(", waitingThread=");
+				builder.append(waitingThread);
+				builder.append("]");
+				return builder.toString();
+			}
 		}
 
 		private final RequestHandler owner;
@@ -176,6 +187,20 @@ class RequestHandler implements Closeable {
 		@Override
 		public int hashCode() {
 			return requestId;
+		}
+
+		@Override
+		public String toString() {
+			StringBuilder builder = new StringBuilder();
+			builder.append("Request[");
+			builder.append("owner=");
+			builder.append(owner);
+			builder.append(", requestId=");
+			builder.append(requestId);
+			builder.append(", state=");
+			builder.append(state);
+			builder.append("]");
+			return builder.toString();
 		}
 	}
 

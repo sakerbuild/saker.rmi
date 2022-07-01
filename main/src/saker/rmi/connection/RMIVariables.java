@@ -133,6 +133,8 @@ public class RMIVariables implements AutoCloseable {
 	@SuppressWarnings("unused")
 	private volatile int objectIdProvider = 1;
 
+	private final RMIStream stream;
+
 	private final ReferenceQueue<Object> gcReferenceQueue = new ReferenceQueue<>();
 
 	private final WeakReference<RMIVariables> gcThreadThisWeakReference = new WeakReference<>(this, gcReferenceQueue);
@@ -148,8 +150,9 @@ public class RMIVariables implements AutoCloseable {
 
 	private RMITransferPropertiesHolder properties;
 
-	RMIVariables(int localIdentifier, int remoteIdentifier, RMIConnection connection) {
+	RMIVariables(int localIdentifier, int remoteIdentifier, RMIConnection connection, RMIStream stream) {
 		//XXX we could allow the user to add custom transfer properties just for this variables instance
+		this.stream = stream;
 		this.properties = AutoCreatingRMITransferProperties.create(connection.getProperties());
 		this.localIdentifier = localIdentifier;
 		this.remoteIdentifier = remoteIdentifier;
@@ -243,7 +246,6 @@ public class RMIVariables implements AutoCloseable {
 	 */
 	public Object getRemoteContextVariable(String variablename) throws RMIIOFailureException {
 		addOngoingRequest();
-		RMIStream stream = connection.getStream();
 		try {
 			return stream.getRemoteContextVariable(this, variablename);
 		} catch (IOException e) {
@@ -324,7 +326,6 @@ public class RMIVariables implements AutoCloseable {
 	public Object newRemoteInstance(ConstructorTransferProperties<?> constructor, Object... arguments)
 			throws RMIRuntimeException, InvocationTargetException {
 		addOngoingRequest();
-		RMIStream stream = connection.getStream();
 		try {
 			return stream.newRemoteInstance(this, constructor, arguments);
 		} finally {
@@ -377,7 +378,6 @@ public class RMIVariables implements AutoCloseable {
 	public Object invokeRemoteStaticMethod(MethodTransferProperties method, Object... arguments)
 			throws RMIRuntimeException, InvocationTargetException {
 		addOngoingRequest();
-		RMIStream stream = connection.getStream();
 		try {
 			return stream.callMethod(this, NO_OBJECT_ID, method, arguments);
 		} finally {
@@ -868,7 +868,6 @@ public class RMIVariables implements AutoCloseable {
 			constructorarguments = ObjectUtils.EMPTY_OBJECT_ARRAY;
 		}
 		addOngoingRequest();
-		RMIStream stream = connection.getStream();
 		try {
 			return stream.newRemoteOnlyInstance(this, remoteclassloaderid, classname, constructorargumentclasses,
 					constructorarguments);
@@ -940,7 +939,6 @@ public class RMIVariables implements AutoCloseable {
 	Object invokeAllowedNonRedirectMethod(int remoteid, MethodTransferProperties method, Object[] arguments)
 			throws InvocationTargetException {
 		addOngoingRequest();
-		RMIStream stream = connection.getStream();
 		try {
 			return stream.callMethod(this, remoteid, method, arguments);
 		} finally {
@@ -950,7 +948,6 @@ public class RMIVariables implements AutoCloseable {
 
 	private void invokeAllowedNonRedirectMethodAsync(int remoteid, MethodTransferProperties method, Object[] arguments)
 			throws RMIIOFailureException {
-		RMIStream stream = connection.getStream();
 		stream.callMethodAsync(this, remoteid, method, arguments);
 	}
 
@@ -985,12 +982,14 @@ public class RMIVariables implements AutoCloseable {
 			throw new IllegalArgumentException("Local object doesn't exist with id: " + localid);
 		}
 		synchronized (localref) {
-			if (count > localref.remoteReferenceCount) {
-				throw new IllegalArgumentException("Released count: " + count
-						+ " is greater than remote reference count: " + localref.remoteReferenceCount);
+			int remoterefcount = localref.remoteReferenceCount;
+			if (count > remoterefcount) {
+				throw new IllegalArgumentException(
+						"Released count: " + count + " is greater than remote reference count: " + remoterefcount);
 			}
-			localref.remoteReferenceCount -= count;
-			if (localref.remoteReferenceCount == 0) {
+			int nremoterefcount = remoterefcount - count;
+			localref.remoteReferenceCount = nremoterefcount;
+			if (nremoterefcount == 0) {
 				//local object is not referenced any more on the other side
 				//null out reference to allow garbage collection
 				localref.strongReference = null;
@@ -1053,6 +1052,23 @@ public class RMIVariables implements AutoCloseable {
 			return proxy.remoteId;
 		}
 		return null;
+	}
+
+	/**
+	 * Checks if this variables context strongly references the given argument as a local object.
+	 * <p>
+	 * Note: used for testing purposes.
+	 * 
+	 * @param localobject
+	 *            The object.
+	 * @return <code>true</code> if this object is strongly referenced by this variables instance.
+	 */
+	boolean isLocalObjectKnown(Object localobject) {
+		synchronized (refSync) {
+			@SuppressWarnings("unlikely-arg-type")
+			LocalObjectReference gotobjref = localObjectsToLocalReferences.get(new IdentityRefSearcher(localobject));
+			return gotobjref != null && gotobjref.strongReference != null;
+		}
 	}
 
 	int getLocalInstanceIdIncreaseReference(Object localobject) {
@@ -1416,7 +1432,7 @@ public class RMIVariables implements AutoCloseable {
 			cachedRemoteProxies.remove(remoteid, rpr);
 			//notify the remote connection about the unreachability
 			try {
-				connection.getStream().writeCommandReferencesReleased(this, remoteid, rpr.referenceCount);
+				stream.writeCommandReferencesReleased(this, remoteid, rpr.referenceCount);
 			} catch (RMIIOFailureException | IOException e) {
 				//IO error occurred when we were trying to write the released command
 				//we expect that we wont be able to write any command to the streams

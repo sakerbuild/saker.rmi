@@ -38,7 +38,12 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 		ExceptionThread thread = new ExceptionThread(threadgroup, (ThrowingRunnable) this::connectAndRunTest,
 				"RMI test: " + getClass().getName());
 		thread.start();
-		thread.join();
+		try {
+			thread.join();
+		} catch (InterruptedException e) {
+			thread.interrupt();
+			throw e;
+		}
 		Throwable exc = thread.getException();
 		//dump the threads before the destroy() call
 		ThreadUtils.dumpThreadGroupStackTraces(System.out, threadgroup);
@@ -79,6 +84,7 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 			}
 
 			for (Executor executor : executors) {
+				System.out.println("RMI test with executor: " + null);
 				RMIOptions baseoptions = new RMIOptions().maxStreamCount(maxstreams)
 						.classLoader(getClass().getClassLoader());
 				if (executor != null) {

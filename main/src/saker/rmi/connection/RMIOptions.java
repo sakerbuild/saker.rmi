@@ -146,8 +146,8 @@ public final class RMIOptions {
 	/**
 	 * Specifies the thread group to use for worker threads in the connection.
 	 * <p>
-	 * Note: since saker.rmi version 0.8.3 if you set the worker thread group, the {@linkplain #executor(Executor)
-	 * executor} will be unset.
+	 * <b>Note</b>: since saker.rmi version 0.8.3 if you set the worker thread group, the
+	 * {@linkplain #executor(Executor) executor} will be unset.
 	 * <p>
 	 * Any created thread that is used to manage the connection will have this thread group as an ancestor. <br>
 	 * Worker threads include: <br>

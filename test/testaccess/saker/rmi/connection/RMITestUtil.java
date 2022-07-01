@@ -15,17 +15,29 @@
  */
 package saker.rmi.connection;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Method;
 import java.util.Set;
 
+import saker.rmi.connection.RMIStream.CommandHandler;
+import saker.rmi.connection.RMIStream.ReferencesReleasedAction;
 import saker.util.ReflectUtils;
 import saker.util.io.ByteSource;
+import saker.util.io.DataInputUnsyncByteArrayInputStream;
 import saker.util.io.ReadWriteBufferOutputStream;
+import saker.util.io.function.IOBiConsumer;
+import saker.util.io.function.IOConsumer;
+import saker.util.io.function.IORunnable;
+import saker.util.io.function.IOTriFunction;
 
 public class RMITestUtil {
+	private static final RMIStream.CommandHandler[] ORIGINAL_COMMAND_HANDLERS = RMIStream.COMMAND_HANDLERS.clone();
+	private static final IOTriFunction<RMIStream, RMIVariables, DataInputUnsyncByteArrayInputStream, Object>[] ORIGINAL_OBJECT_READERS = RMIStream.OBJECT_READERS
+			.clone();
+
 	public static RMIConnection[] createPipedConnection() throws Exception {
 		ClassLoader cl = RMITestUtil.class.getClassLoader();
 		return createPipedConnection(cl);
@@ -113,6 +125,10 @@ public class RMITestUtil {
 		return remotevars.getObjectWithLocalId(proxyobj.remoteId);
 	}
 
+	public static boolean isLocalObjectKnown(RMIVariables vars, Object localobject) {
+		return vars.isLocalObjectKnown(localobject);
+	}
+
 	public static byte[] testProxyCreation(Set<Class<?>> interfaces) {
 		return testProxyCreation("noname", interfaces);
 	}
@@ -140,6 +156,43 @@ public class RMITestUtil {
 
 	public static Set<Class<?>> getPublicInterfaceSetOf(Class<?> c) {
 		return RMIStream.getPublicNonAssignableInterfaces(c, MethodHandles.lookup(), null);
+	}
+
+	public static IOTriFunction<?, RMIVariables, DataInputUnsyncByteArrayInputStream, Object>[] getObjectReaders() {
+		return RMIStream.OBJECT_READERS;
+	}
+
+//	public static IOBiConsumer<?, DataInputUnsyncByteArrayInputStream>[] getCommandHandlers() {
+//		return RMIStream.COMMAND_HANDLERS;
+//	}
+
+	public static void replaceCommandHandler(short command, IOConsumer<Object[]> handler) {
+		CommandHandler originalcommand = RMIStream.COMMAND_HANDLERS[command];
+		if (originalcommand == null) {
+			throw new IllegalArgumentException("No original command handler: " + command);
+		}
+		RMIStream.COMMAND_HANDLERS[command] = new RMIStream.CommandHandler() {
+			@Override
+			public void accept(RMIStream stream, DataInputUnsyncByteArrayInputStream in,
+					ReferencesReleasedAction gcaction) throws IOException {
+				handler.accept(new Object[] { stream, in, gcaction });
+			}
+
+			@Override
+			public boolean isPreventGarbageCollection() {
+				return originalcommand.isPreventGarbageCollection();
+			}
+		};
+	}
+
+	public static void callOriginalCommandHandler(short command, Object[] args) throws IOException {
+		ORIGINAL_COMMAND_HANDLERS[command].accept((RMIStream) args[0], (DataInputUnsyncByteArrayInputStream) args[1],
+				(ReferencesReleasedAction) args[2]);
+	}
+
+	public static void restoreInternalHandlers() {
+		System.arraycopy(ORIGINAL_OBJECT_READERS, 0, RMIStream.OBJECT_READERS, 0, ORIGINAL_OBJECT_READERS.length);
+		System.arraycopy(ORIGINAL_COMMAND_HANDLERS, 0, RMIStream.COMMAND_HANDLERS, 0, ORIGINAL_COMMAND_HANDLERS.length);
 	}
 
 }

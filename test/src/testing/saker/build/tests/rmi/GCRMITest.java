@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 
 import saker.rmi.connection.RMITestUtil;
+import saker.util.ObjectUtils;
 import testing.saker.SakerTest;
 
 @SakerTest
@@ -58,22 +59,24 @@ public class GCRMITest extends BaseVariablesRMITestCase {
 
 	@Override
 	protected void runVariablesTestImpl() throws Exception {
-		//hold reference to the references to get the queued
-		@SuppressWarnings("unused")
+		//hold reference to the references to get them queued
 		Collection<PhantomReference<Object>> refs = testInvocations();
-		//this test is non deterministic, however it should probably pass if it works, and fail if it doesnt
-		int gcdrefs = 0;
-		for (int i = 0; i < 5000 / GC_TIMEOUT_MS && gcdrefs < 3; i++) {
-			System.gc();
-			while (queue.poll() != null) {
-				gcdrefs++;
+		try {
+			//this test is non deterministic, however it should probably pass if it works, and fail if it doesnt
+			int gcdrefs = 0;
+			for (int i = 0; i < 5000 / GC_TIMEOUT_MS && gcdrefs < 3; i++) {
+				System.gc();
+				while (queue.remove(GC_TIMEOUT_MS) != null) {
+					gcdrefs++;
+				}
 			}
-			Thread.sleep(GC_TIMEOUT_MS);
-		}
-		assertEquals(gcdrefs, 3);
+			assertEquals(gcdrefs, 3);
 
-		assertEquals(RMITestUtil.getLiveLocalObjectCount(clientVariables), 0);
-		assertEquals(RMITestUtil.getLiveLocalObjectCount(serverVariables), 0);
+			assertEquals(RMITestUtil.getLiveLocalObjectCount(clientVariables), 0);
+			assertEquals(RMITestUtil.getLiveLocalObjectCount(serverVariables), 0);
+		} finally {
+			ObjectUtils.reachabilityFence(refs);
+		}
 	}
 
 	private Collection<PhantomReference<Object>> testInvocations() throws Exception {
@@ -92,7 +95,7 @@ public class GCRMITest extends BaseVariablesRMITestCase {
 
 		return result;
 	}
-	
+
 	@Override
 	protected BaseRMITestSettings getTestSettings() {
 		BaseRMITestSettings result = super.getTestSettings();

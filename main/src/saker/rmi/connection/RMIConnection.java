@@ -358,8 +358,9 @@ public final class RMIConnection implements AutoCloseable {
 					got.increaseReference();
 					return got;
 				}
-				int varsremoteid = getStream().createNewVariables(name, identifier);
-				got = new NamedRMIVariables(name, identifier, varsremoteid, this);
+				RMIStream stream = getStream();
+				int varsremoteid = stream.createNewVariables(name, identifier);
+				got = new NamedRMIVariables(name, identifier, varsremoteid, this, stream);
 				variablesByNames.put(name, got);
 			}
 			variablesByLocalId.put(identifier, got);
@@ -380,8 +381,9 @@ public final class RMIConnection implements AutoCloseable {
 	public RMIVariables newVariables() throws RMIRuntimeException {
 		checkClosed();
 		int identifier = AIFU_variablesIdentifierCounter.getAndIncrement(this);
-		int varsremoteid = getStream().createNewVariables(null, identifier);
-		RMIVariables result = new RMIVariables(identifier, varsremoteid, this);
+		RMIStream stream = getStream();
+		int varsremoteid = stream.createNewVariables(null, identifier);
+		RMIVariables result = new RMIVariables(identifier, varsremoteid, this, stream);
 
 		//check if the connection was closed meanwhile
 		//close the variables, and report an appropriate exception if so
@@ -775,11 +777,11 @@ public final class RMIConnection implements AutoCloseable {
 		return variablesByLocalId.get(identifier);
 	}
 
-	RMIVariables newRemoteVariables(String name, int remoteid) throws IOException {
+	RMIVariables newRemoteVariables(String name, int remoteid, RMIStream stream) throws IOException {
 		if (ObjectUtils.isNullOrEmpty(name)) {
-			return newUnnamedRemoteVariables(remoteid);
+			return newUnnamedRemoteVariables(remoteid, stream);
 		}
-		return newNamedRemoteVariables(name, remoteid);
+		return newNamedRemoteVariables(name, remoteid, stream);
 	}
 
 	void remotelyClosedVariables(RMIVariables vars) {
@@ -901,7 +903,7 @@ public final class RMIConnection implements AutoCloseable {
 		IOUtils.close(stream);
 	}
 
-	RMIStream getStream() {
+	private RMIStream getStream() {
 		checkClosed();
 		synchronized (stateModifyLock) {
 			return getStreamStateModifyLocked();
@@ -909,6 +911,7 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	private RMIStream getStreamStateModifyLocked() {
+		//TODO open streams on demand, lazily
 		if (allStreams.isEmpty()) {
 			throw new RMIIOFailureException("No stream found.");
 		}
@@ -1215,16 +1218,17 @@ public final class RMIConnection implements AutoCloseable {
 		invokeIOErrorListeners(exc, true);
 	}
 
-	private RMIVariables newUnnamedRemoteVariables(int remoteid) {
+	private RMIVariables newUnnamedRemoteVariables(int remoteid, RMIStream stream) {
 		synchronized (stateModifyLock) {
 			checkAborting();
-			RMIVariables got = new RMIVariables(AIFU_variablesIdentifierCounter.getAndIncrement(this), remoteid, this);
+			RMIVariables got = new RMIVariables(AIFU_variablesIdentifierCounter.getAndIncrement(this), remoteid, this,
+					stream);
 			variablesByLocalId.put(got.getLocalIdentifier(), got);
 			return got;
 		}
 	}
 
-	private RMIVariables newNamedRemoteVariables(String name, int remoteid) throws IOException {
+	private RMIVariables newNamedRemoteVariables(String name, int remoteid, RMIStream stream) throws IOException {
 		synchronized (stateModifyLock) {
 			checkAborting();
 			NamedRMIVariables got;
@@ -1234,8 +1238,8 @@ public final class RMIConnection implements AutoCloseable {
 					return got;
 				}
 
-				got = new NamedRMIVariables(name, AIFU_variablesIdentifierCounter.getAndIncrement(this), remoteid,
-						this);
+				got = new NamedRMIVariables(name, AIFU_variablesIdentifierCounter.getAndIncrement(this), remoteid, this,
+						stream);
 				RMIVariables prev = variablesByNames.putIfAbsent(name, got);
 				if (prev != null) {
 					IOException cause = IOUtils.closeExc(got);
@@ -1364,7 +1368,8 @@ public final class RMIConnection implements AutoCloseable {
 				RMIStream nstream = new RMIStream(this, streampair);
 				addStream(nstream);
 			}
-		} catch (Exception e) {
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
+				| ServiceConfigurationError e) {
 			invokeIOErrorListeners(e, false);
 		} finally {
 			this.streamAddingThread = null;
