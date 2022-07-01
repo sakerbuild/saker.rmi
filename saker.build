@@ -139,3 +139,18 @@ testjava15(){
 		jdk: saker.java.sdk(15),
 	)
 }
+testjava16(){
+	test(
+		jdk: saker.java.sdk(16),
+	)
+}
+testjava17(){
+	test(
+		jdk: saker.java.sdk(17),
+	)
+}
+testjava18(){
+	test(
+		jdk: saker.java.sdk(18),
+	)
+}
