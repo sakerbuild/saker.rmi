@@ -181,6 +181,7 @@ public final class RMIConnection implements AutoCloseable {
 	private final ThreadLocal<int[]> currentThreadPreviousMethodCallRequestId = ThreadLocal
 			.withInitial(() -> new int[1]);
 
+	@SuppressWarnings("unused") // used through its atomic field updater
 	private volatile int offeredStreamTaskCount;
 
 	private final ConcurrentPrependAccumulator<StrongSoftReference<DataOutputUnsyncByteArrayOutputStream>> bufferCache = new ConcurrentPrependAccumulator<>();
@@ -838,7 +839,7 @@ public final class RMIConnection implements AutoCloseable {
 		}
 
 		try {
-			getStreamStateModifyLocked().writeVariablesClosed(variables);
+			variables.getStream().writeVariablesClosed(variables);
 		} catch (IOException | RMIRuntimeException e) {
 		}
 		closeIfAbortingAndNoVariablesLocked();

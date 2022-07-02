@@ -1137,6 +1137,10 @@ public class RMIVariables implements AutoCloseable {
 		return invokeAllowedNonRedirectMethod(remoteid, method, arguments);
 	}
 
+	RMIStream getStream() {
+		return stream;
+	}
+
 	private static class LocalObjectReference extends WeakReference<Object> {
 		final int localId;
 		Object strongReference;
