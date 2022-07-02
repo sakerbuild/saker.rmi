@@ -108,7 +108,7 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 				break;
 			}
 			System.gc();
-			Thread.sleep(20);
+			Thread.sleep(50);
 		}
 		System.out.println("GCActionStressTest.runVariablesTestImpl() done checking alive objects");
 
