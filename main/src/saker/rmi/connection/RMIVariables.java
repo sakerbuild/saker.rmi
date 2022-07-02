@@ -1111,6 +1111,10 @@ public class RMIVariables implements AutoCloseable {
 		return localIdentifiersToLocalObjects.size();
 	}
 
+	int getLiveRemoteObjectCount() {
+		return cachedRemoteProxies.size();
+	}
+
 	RMITransferPropertiesHolder getProperties() {
 		return properties;
 	}

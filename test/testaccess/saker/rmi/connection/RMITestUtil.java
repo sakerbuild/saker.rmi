@@ -118,6 +118,10 @@ public class RMITestUtil {
 		return vars.getLiveLocalObjectCount();
 	}
 
+	public static int getLiveRemoteObjectCount(RMIVariables vars) {
+		return vars.getLiveRemoteObjectCount();
+	}
+
 	public static Object getRemoteVariablesVariable(RMIConnection connection, Object proxy) {
 		RemoteProxyObject proxyobj = (RemoteProxyObject) proxy;
 		RMIVariables vars = proxyobj.variables.get();
@@ -162,13 +166,8 @@ public class RMITestUtil {
 		return RMIStream.OBJECT_READERS;
 	}
 
-//	public static IOBiConsumer<?, DataInputUnsyncByteArrayInputStream>[] getCommandHandlers() {
-//		return RMIStream.COMMAND_HANDLERS;
-//	}
-
 	public static void replaceCommandHandler(short command, IOConsumer<Object[]> handler) {
-		//get the previous command handler instead of the original, so they can be chained
-		CommandHandler originalcommand = RMIStream.COMMAND_HANDLERS[command];
+		CommandHandler originalcommand = ORIGINAL_COMMAND_HANDLERS[command];
 		if (originalcommand == null) {
 			throw new IllegalArgumentException("No original command handler: " + command);
 		}
@@ -181,13 +180,7 @@ public class RMITestUtil {
 
 			@Override
 			public boolean isPreventGarbageCollection() {
-				boolean preventgc = originalcommand.isPreventGarbageCollection();
-				if (ORIGINAL_COMMAND_HANDLERS[command].isPreventGarbageCollection() != preventgc) {
-					System.out.println(
-							"RMITestUtil.replaceCommandHandler() / isPreventGarbageCollection() prevent GC config mismatch for command: "
-									+ command);
-				}
-				return preventgc;
+				return originalcommand.isPreventGarbageCollection();
 			}
 		};
 	}
