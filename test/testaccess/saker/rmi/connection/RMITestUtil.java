@@ -167,6 +167,7 @@ public class RMITestUtil {
 //	}
 
 	public static void replaceCommandHandler(short command, IOConsumer<Object[]> handler) {
+		//get the previous command handler instead of the original, so they can be chained
 		CommandHandler originalcommand = RMIStream.COMMAND_HANDLERS[command];
 		if (originalcommand == null) {
 			throw new IllegalArgumentException("No original command handler: " + command);
@@ -180,9 +181,19 @@ public class RMITestUtil {
 
 			@Override
 			public boolean isPreventGarbageCollection() {
-				return originalcommand.isPreventGarbageCollection();
+				boolean preventgc = originalcommand.isPreventGarbageCollection();
+				if (ORIGINAL_COMMAND_HANDLERS[command].isPreventGarbageCollection() != preventgc) {
+					System.out.println(
+							"RMITestUtil.replaceCommandHandler() / isPreventGarbageCollection() prevent GC config mismatch for command: "
+									+ command);
+				}
+				return preventgc;
 			}
 		};
+	}
+
+	public static boolean isCommandPreventGarbageCollection(short command) {
+		return RMIStream.COMMAND_HANDLERS[command].isPreventGarbageCollection();
 	}
 
 	public static void callOriginalCommandHandler(short command, Object[] args) throws IOException {

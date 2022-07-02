@@ -33,6 +33,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 import saker.rmi.exception.RMICallFailedException;
@@ -149,6 +150,19 @@ public class RMIVariables implements AutoCloseable {
 	private volatile int state;
 
 	private RMITransferPropertiesHolder properties;
+
+	/**
+	 * A non-reentrant lock for writing a references released command.
+	 * <p>
+	 * This field is kept on a per RMIVariables basis instead of a per RMIStream basis, as the objects are tracked in
+	 * variables contexts.
+	 * <p>
+	 * The waiting on this sempahore is interruptable when writing the gc command, but is acquired uninterruptibly when
+	 * waiting to write command other than gc. This is because the semaphore should be available quickly after a gc
+	 * command, so interruption handling is not strictly necessary in case an other commands, however, in case when
+	 * writing a gc command, it can be handled on the gc thread.
+	 */
+	protected final Semaphore gcCommandSemaphore = new Semaphore(1);
 
 	RMIVariables(int localIdentifier, int remoteIdentifier, RMIConnection connection, RMIStream stream) {
 		//XXX we could allow the user to add custom transfer properties just for this variables instance
@@ -1423,7 +1437,7 @@ public class RMIVariables implements AutoCloseable {
 		}
 	}
 
-	private boolean handleGcQueuedReference(Reference<? extends Object> ref) {
+	private boolean handleGcQueuedReference(Reference<? extends Object> ref) throws InterruptedException {
 		if (ref instanceof RemoteProxyReference) {
 			RemoteProxyReference rpr = (RemoteProxyReference) ref;
 			//reference to a proxy object became unreachable

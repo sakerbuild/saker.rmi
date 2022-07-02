@@ -304,7 +304,11 @@ final class RMIStream implements Closeable {
 		final StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer;
 
 		public CommandFlusher() {
-			this.buffer = connection.getCachedByteBuffer();
+			this(connection.getCachedByteBuffer());
+		}
+
+		public CommandFlusher(StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer) {
+			this.buffer = buffer;
 		}
 
 		public DataOutputUnsyncByteArrayOutputStream getBuffer() {
@@ -313,28 +317,11 @@ final class RMIStream implements Closeable {
 
 		@Override
 		public void close() throws IOException {
-			try {
-				checkClosed();
-
-				outSemaphore.acquireUninterruptibly();
-				try {
-					//XXX we might remove checkClosed calls from the command writers
-					getBuffer().writeTo(blockOut);
-					blockOut.nextBlock();
-					//need to flush, as the underlying output stream might be buffered, or anything
-					blockOut.flush();
-				} finally {
-					outSemaphore.release();
-				}
-			} catch (IOException e) {
-				streamError(e);
-				throw e;
-			} finally {
-				connection.releaseCachedByteBuffer(buffer);
-			}
+			flushCommand(buffer);
 		}
 	}
 
+	//XXX a test is recommended for this mechanism, to check that no gc action is pending when an RMIVariables is closed
 	static final class ReferencesReleasedAction {
 		private static final class ReleaseData {
 			protected final RMIVariables vars;
@@ -367,32 +354,84 @@ final class RMIStream implements Closeable {
 		private static final AtomicReferenceFieldUpdater<RMIStream.ReferencesReleasedAction, ReleaseData> ARFU_releaseData = AtomicReferenceFieldUpdater
 				.newUpdater(RMIStream.ReferencesReleasedAction.class, ReleaseData.class, "releaseData");
 
+		private static final AtomicReferenceFieldUpdater<RMIStream.ReferencesReleasedAction, ReferencesReleasedAction> ARFU_prev = AtomicReferenceFieldUpdater
+				.newUpdater(RMIStream.ReferencesReleasedAction.class, ReferencesReleasedAction.class, "prev");
+		private static final AtomicReferenceFieldUpdater<RMIStream.ReferencesReleasedAction, ReferencesReleasedAction> ARFU_next = AtomicReferenceFieldUpdater
+				.newUpdater(RMIStream.ReferencesReleasedAction.class, ReferencesReleasedAction.class, "next");
+
+		protected volatile ReferencesReleasedAction next;
+		protected volatile ReferencesReleasedAction prev;
+
 		protected volatile int pendingRequests;
 
 		protected volatile ReleaseData releaseData;
 
-		public boolean referencesReleased(RMIVariables vars, int localid, int count) {
-			if (pendingRequests == 0) {
-				vars.referencesReleased(localid, count);
+		public ReferencesReleasedAction() {
+		}
+
+		public ReferencesReleasedAction(ReferencesReleasedAction prev) {
+			this.prev = prev;
+		}
+
+		private boolean isAllPendingRequestsDone() {
+			if (this.pendingRequests != 0) {
+				return false;
+			}
+			ReferencesReleasedAction action = this.prev;
+			if (action == null) {
 				return true;
+			}
+			if (isAllPendingRequestsDone(action)) {
+				//all pending requests from the previous are done, clear the field,
+				//so the reference is not kept, and further checks are faster
+				this.prev = null;
+				return true;
+			}
+			return false;
+		}
+
+		private static boolean isAllPendingRequestsDone(ReferencesReleasedAction action) {
+			for (; action != null; action = action.prev) {
+				if (action.pendingRequests != 0) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		//the next action is a newly constructed clean instance, that has its prev pointer set to this
+		//we don't have to do notifications for the next action in case we have no more pending requests,
+		//as the next action is a clean one
+		public void referencesReleased(RMIVariables vars, int localid, int count, ReferencesReleasedAction nextaction) {
+			if (isAllPendingRequestsDone()) {
+				vars.referencesReleased(localid, count);
+				//clear the prev action of the next one, as we have no more pending requests
+				ARFU_prev.compareAndSet(nextaction, this, null);
+				return;
 			}
 			ReleaseData ndata = new ReleaseData(vars, localid, count);
 			if (!ARFU_releaseData.compareAndSet(this, null, ndata)) {
 				throw new IllegalStateException("Duplicate use of reference release action: " + ndata);
 			}
 			//query the pending requests again in case it was concurrently modified
-			if (pendingRequests != 0) {
+			if (!isAllPendingRequestsDone()) {
 				//okay, somebody else will do the garbage collection
-				return false;
+				if (!ARFU_next.compareAndSet(this, null, nextaction)) {
+					throw new IllegalStateException(
+							"Duplicate use of reference release action, failed to set next action.");
+				}
+				return;
 			}
+			//clear the prev action of the next one, as we have no more pending requests
+			ARFU_prev.compareAndSet(nextaction, this, null);
+
+			//the pending requests are done, and it won't increase, as this function is called on a single thread that manages its increase
 			ReleaseData prev = ARFU_releaseData.getAndSet(this, null);
 			if (prev != null) {
 				//can be called on the parameter variables, as they must equal to the values in the received ReleaseData
 				vars.referencesReleased(localid, count);
-				return true;
 			}
-			//okay, somebody else is doing it now
-			return false;
+			//else okay, somebody else is doing it now
 		}
 
 		public void increasePendingRequestCount() {
@@ -402,11 +441,50 @@ final class RMIStream implements Closeable {
 		public void decreasePendingRequestCount() {
 			int nval = AIFU_pendingRequests.decrementAndGet(this);
 			if (nval == 0) {
-				//no more pending requests, perform the garbage collection if any
-				ReleaseData prev = ARFU_releaseData.getAndSet(this, null);
-				if (prev != null) {
-					prev.vars.referencesReleased(prev.localId, prev.count);
+				//no more pending requests, perform the garbage collection if any, 
+				//and all previous action requests are done
+
+				ReferencesReleasedAction action = this.prev;
+				if (action != null && !action.isAllPendingRequestsDone()) {
+					//can't do the GC yet, some request are still running
+					//we'll get a no more request notification when the previous one doesn't have any more pending requests
+					return;
 				}
+				//no more pending requests in the previous actions (if there's any previous action)
+				//we can proceed with the reference releasing
+
+				releaseReferenceOnNoMorePendingRequests();
+
+				//notify the next actions about the no more pending requests info
+				for (ReferencesReleasedAction next = this.next; next != null;) {
+					if (next.noMoreRequestNotificationFromPrevious()) {
+						//the action has no more pending requests, proceed and notify up the chain
+						next = next.next;
+					} else {
+						//the action still has some pending request, break the notificaiton chain
+						break;
+					}
+				}
+
+			}
+		}
+
+		private boolean noMoreRequestNotificationFromPrevious() {
+			//clear the prev field, as all previous pending requests are done
+			this.prev = null;
+			if (pendingRequests != 0) {
+				//we still have some requests going on
+				return false;
+			}
+			//no more requests, perform the reference release if needed
+			releaseReferenceOnNoMorePendingRequests();
+			return true;
+		}
+
+		private void releaseReferenceOnNoMorePendingRequests() {
+			ReleaseData prevdata = ARFU_releaseData.getAndSet(this, null);
+			if (prevdata != null) {
+				prevdata.vars.referencesReleased(prevdata.localId, prevdata.count);
 			}
 		}
 	}
@@ -458,7 +536,8 @@ final class RMIStream implements Closeable {
 							}
 							case COMMAND_REFERENCES_RELEASED: {
 								ReferencesReleasedAction currentaction = this.gcAction;
-								this.gcAction = new ReferencesReleasedAction();
+								ReferencesReleasedAction nextaction = new ReferencesReleasedAction(currentaction);
+								this.gcAction = nextaction;
 
 								connection.offerStreamTask(this);
 
@@ -469,7 +548,7 @@ final class RMIStream implements Closeable {
 								int localid = in.readInt();
 								int count = in.readInt();
 
-								currentaction.referencesReleased(vars, localid, count);
+								currentaction.referencesReleased(vars, localid, count, nextaction);
 								break command_input_try;
 							}
 							default: {
@@ -703,6 +782,29 @@ final class RMIStream implements Closeable {
 		typeWriters.put(char[].class,
 				(IOBiConsumer<DataOutputUnsyncByteArrayOutputStream, char[]>) RMIStream::writeObjectCharArray);
 
+	}
+
+	protected void flushCommand(StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> bufferref)
+			throws IOException {
+		try {
+			checkClosed();
+
+			outSemaphore.acquireUninterruptibly();
+			try {
+				//XXX we might remove checkClosed calls from the command writers
+				bufferref.get().writeTo(blockOut);
+				blockOut.nextBlock();
+				//need to flush, as the underlying output stream might be buffered, or anything
+				blockOut.flush();
+			} finally {
+				outSemaphore.release();
+			}
+		} catch (IOException e) {
+			streamError(e);
+			throw e;
+		} finally {
+			connection.releaseCachedByteBuffer(bufferref);
+		}
 	}
 
 	private void writeCustomizableWithWriteHandler(RMIVariables variables, Object obj, Class<?> targettype,
@@ -2491,16 +2593,24 @@ final class RMIStream implements Closeable {
 				"Object with id: " + localid + " is not an instance of " + ClassLoader.class.getName());
 	}
 
-	void writeCommandReferencesReleased(RMIVariables variables, int remoteid, int count) throws IOException {
+	void writeCommandReferencesReleased(RMIVariables variables, int remoteid, int count)
+			throws IOException, InterruptedException {
 		if (count <= 0) {
 			throw new IllegalArgumentException("Count must be greater than zero: " + count);
 		}
-		try (CommandFlusher flusher = new CommandFlusher()) {
-			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
-			out.writeShort(COMMAND_REFERENCES_RELEASED);
-			writeVariables(variables, out);
-			out.writeInt(remoteid);
-			out.writeInt(count);
+		StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer = connection.getCachedByteBuffer();
+		DataOutputUnsyncByteArrayOutputStream out = buffer.get();
+		out.writeShort(COMMAND_REFERENCES_RELEASED);
+		writeVariables(variables, out);
+		out.writeInt(remoteid);
+		out.writeInt(count);
+
+		Semaphore gcsemaphore = variables.gcCommandSemaphore;
+		gcsemaphore.acquire();
+		try {
+			flushCommand(buffer);
+		} finally {
+			gcsemaphore.release();
 		}
 	}
 
@@ -2838,67 +2948,79 @@ final class RMIStream implements Closeable {
 	private void writeCommandMethodCallAsync(RMIVariables variables, int remoteid, MethodTransferProperties method,
 			Object[] arguments) throws IOException {
 		checkClosed();
-		try (CommandFlusher flusher = new CommandFlusher()) {
-			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
-			out.writeShort(COMMAND_METHODCALL_ASYNC);
-			writeVariables(variables, out);
-			out.writeInt(remoteid);
+		StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer = connection.getCachedByteBuffer();
+		DataOutputUnsyncByteArrayOutputStream out = buffer.get();
 
-			writeMethod(method.getExecutable(), out);
+		out.writeShort(COMMAND_METHODCALL_ASYNC);
+		writeVariables(variables, out);
+		out.writeInt(remoteid);
+
+		writeMethod(method.getExecutable(), out);
+
+		Semaphore gcsemaphore = variables.gcCommandSemaphore;
+		gcsemaphore.acquireUninterruptibly();
+		try {
 			writeMethodParameters(variables, method, arguments, out);
+			flushCommand(buffer);
 		} finally {
-			//we need a reachability fence for the method arguments, to avoid garbage collection remote object arguments
-			//and thus running into scenarios when we don't find the garbage collected objects on some side
-			ObjectUtils.reachabilityFence(arguments);
+			gcsemaphore.release();
 		}
 	}
 
 	private void writeCommandMethodCall(RMIVariables variables, int reqid, int remoteid,
 			MethodTransferProperties method, Object[] arguments, Integer dispatch) throws IOException {
 		checkClosed();
-		try (CommandFlusher flusher = new CommandFlusher()) {
-			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
-			if (dispatch == null) {
-				out.writeShort(COMMAND_METHODCALL);
-				out.writeInt(reqid);
-			} else {
-				out.writeShort(COMMAND_METHODCALL_REDISPATCH);
-				out.writeInt(reqid);
-				out.writeInt(dispatch);
-			}
-			writeVariables(variables, out);
-			out.writeInt(remoteid);
+		StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer = connection.getCachedByteBuffer();
+		DataOutputUnsyncByteArrayOutputStream out = buffer.get();
 
-			writeMethod(method.getExecutable(), out);
+		if (dispatch == null) {
+			out.writeShort(COMMAND_METHODCALL);
+			out.writeInt(reqid);
+		} else {
+			out.writeShort(COMMAND_METHODCALL_REDISPATCH);
+			out.writeInt(reqid);
+			out.writeInt(dispatch);
+		}
+		writeVariables(variables, out);
+		out.writeInt(remoteid);
+
+		writeMethod(method.getExecutable(), out);
+
+		Semaphore gcsemaphore = variables.gcCommandSemaphore;
+		gcsemaphore.acquireUninterruptibly();
+		try {
 			writeMethodParameters(variables, method, arguments, out);
+			flushCommand(buffer);
 		} finally {
-			//we need a reachability fence for the method arguments, to avoid garbage collection remote object arguments
-			//and thus running into scenarios when we don't find the garbage collected objects on some side
-			ObjectUtils.reachabilityFence(arguments);
+			gcsemaphore.release();
 		}
 	}
 
 	private void writeCommandNewRemoteInstance(RMIVariables variables, int reqid,
 			ConstructorTransferProperties<?> constructor, Object[] arguments, Integer dispatch) throws IOException {
 		checkClosed();
-		try (CommandFlusher flusher = new CommandFlusher()) {
-			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
-			if (dispatch == null) {
-				out.writeShort(COMMAND_NEWINSTANCE);
-				out.writeInt(reqid);
-			} else {
-				out.writeShort(COMMAND_NEWINSTANCE_REDISPATCH);
-				out.writeInt(reqid);
-				out.writeInt(dispatch);
-			}
-			writeVariables(variables, out);
+		StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer = connection.getCachedByteBuffer();
+		DataOutputUnsyncByteArrayOutputStream out = buffer.get();
 
-			writeConstructor(constructor.getExecutable(), out);
+		if (dispatch == null) {
+			out.writeShort(COMMAND_NEWINSTANCE);
+			out.writeInt(reqid);
+		} else {
+			out.writeShort(COMMAND_NEWINSTANCE_REDISPATCH);
+			out.writeInt(reqid);
+			out.writeInt(dispatch);
+		}
+		writeVariables(variables, out);
+
+		writeConstructor(constructor.getExecutable(), out);
+
+		Semaphore gcsemaphore = variables.gcCommandSemaphore;
+		gcsemaphore.acquireUninterruptibly();
+		try {
 			writeMethodParameters(variables, constructor, arguments, out);
+			flushCommand(buffer);
 		} finally {
-			//we need a reachability fence for the method arguments, to avoid garbage collection remote object arguments
-			//and thus running into scenarios when we don't find the garbage collected objects on some side
-			ObjectUtils.reachabilityFence(arguments);
+			gcsemaphore.release();
 		}
 	}
 
@@ -2909,31 +3031,35 @@ final class RMIStream implements Closeable {
 					+ argumentclassnames + " != " + arguments.length);
 		}
 		checkClosed();
-		try (CommandFlusher flusher = new CommandFlusher()) {
-			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
-			if (dispatch == null) {
-				out.writeShort(COMMAND_NEWINSTANCE_UNKNOWNCLASS);
-				out.writeInt(reqid);
-			} else {
-				out.writeShort(COMMAND_NEWINSTANCE_UNKNOWNCLASS_REDISPATCH);
-				out.writeInt(reqid);
-				out.writeInt(dispatch);
-			}
-			writeVariables(variables, out);
-			out.writeInt(remoteclassloaderid);
+		StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer = connection.getCachedByteBuffer();
+		DataOutputUnsyncByteArrayOutputStream out = buffer.get();
 
-			out.writeUTF(classname);
-			out.writeInt(argumentclassnames.length);
+		if (dispatch == null) {
+			out.writeShort(COMMAND_NEWINSTANCE_UNKNOWNCLASS);
+			out.writeInt(reqid);
+		} else {
+			out.writeShort(COMMAND_NEWINSTANCE_UNKNOWNCLASS_REDISPATCH);
+			out.writeInt(reqid);
+			out.writeInt(dispatch);
+		}
+		writeVariables(variables, out);
+		out.writeInt(remoteclassloaderid);
+
+		out.writeUTF(classname);
+		out.writeInt(argumentclassnames.length);
+
+		Semaphore gcsemaphore = variables.gcCommandSemaphore;
+		gcsemaphore.acquireUninterruptibly();
+		try {
 			for (int i = 0; i < argumentclassnames.length; i++) {
 				out.writeUTF(argumentclassnames[0]);
 				Object obj = arguments[i];
 				writeObjectUsingWriteHandler(RMIObjectWriteHandler.defaultWriter(), variables, obj, out,
 						ObjectUtils.classOf(obj));
 			}
+			flushCommand(buffer);
 		} finally {
-			//we need a reachability fence for the method arguments, to avoid garbage collection remote object arguments
-			//and thus running into scenarios when we don't find the garbage collected objects on some side
-			ObjectUtils.reachabilityFence(arguments);
+			gcsemaphore.release();
 		}
 	}
 
@@ -2941,24 +3067,25 @@ final class RMIStream implements Closeable {
 			MethodTransferProperties executableproperties, boolean currentthreadinterrupted, int interruptreqcount)
 			throws IOException {
 		returnvalue = unwrapWrapperForTransfer(returnvalue, variables);
+
 		checkClosed();
-		try (CommandFlusher flusher = new CommandFlusher()) {
-			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
+		StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer = connection.getCachedByteBuffer();
+		DataOutputUnsyncByteArrayOutputStream out = buffer.get();
 
-			out.writeShort(COMMAND_METHODRESULT);
-			out.writeInt(reqid);
-			writeVariables(variables, out);
+		out.writeShort(COMMAND_METHODRESULT);
+		out.writeInt(reqid);
+		writeVariables(variables, out);
 
-			out.writeInt(compressInterruptStatus(currentthreadinterrupted, interruptreqcount));
+		out.writeInt(compressInterruptStatus(currentthreadinterrupted, interruptreqcount));
 
+		Semaphore gcsemaphore = variables.gcCommandSemaphore;
+		gcsemaphore.acquireUninterruptibly();
+		try {
 			writeObjectUsingWriteHandler(executableproperties.getReturnValueWriter(), variables, returnvalue, out,
 					executableproperties.getReturnType());
+			flushCommand(buffer);
 		} finally {
-			//we need a reachability fence for the return value
-			//as if it is a remote object, and is garbage collected before we actually write out the method result,
-			//then the receiving side might get the GC notification before it gets the method result message
-			//and won't find the local reference of this remote object on its side
-			ObjectUtils.reachabilityFence(returnvalue);
+			gcsemaphore.release();
 		}
 	}
 

@@ -84,7 +84,7 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 			}
 
 			for (Executor executor : executors) {
-				System.out.println("RMI test with executor: " + null);
+				System.out.println("RMI test with executor: " + executor);
 				RMIOptions baseoptions = new RMIOptions().maxStreamCount(maxstreams)
 						.classLoader(getClass().getClassLoader());
 				if (executor != null) {
@@ -100,6 +100,7 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 					clientConnection = null;
 					serverConnection = null;
 				}
+				System.out.println();
 			}
 
 		}

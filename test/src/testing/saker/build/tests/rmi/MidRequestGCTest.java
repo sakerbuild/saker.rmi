@@ -52,6 +52,8 @@ public class MidRequestGCTest extends BaseVariablesRMITestCase {
 	protected void runVariablesTestImpl() throws Exception {
 		System.out.println("MidRequestGCTest.runVariablesTestImpl() run test");
 		try {
+			//in case some other faulty test left it in an invalid state
+			RMITestUtil.restoreInternalHandlers();
 			Semaphore getbacksemaphore = new Semaphore(0);
 			getBackCallSemaphore = getbacksemaphore;
 			clientConnection.addErrorListener(new IOErrorListener() {
