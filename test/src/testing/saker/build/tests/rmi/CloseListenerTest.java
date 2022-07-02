@@ -20,10 +20,10 @@ public class CloseListenerTest extends SakerTestCase {
 	@Override
 	public void runTest(Map<String, String> parameters) throws Throwable {
 		testSimple();
-		testSever();
+		testServer();
 	}
 
-	private static void testSever() throws Throwable {
+	private static void testServer() throws Throwable {
 		AtomicInteger serverclosecounter = new AtomicInteger();
 		try (RMIServer server = new RMIServer() {
 
@@ -31,7 +31,9 @@ public class CloseListenerTest extends SakerTestCase {
 			protected void setupConnection(Socket acceptedsocket, RMIConnection connection)
 					throws IOException, RuntimeException {
 				connection.addCloseListener(() -> {
-					System.out.println(serverclosecounter.incrementAndGet());
+					int nval = serverclosecounter.incrementAndGet();
+					System.out
+							.println("CloseListenerTest.testServer().new RMIServer() {...}.setupConnection() " + nval);
 				});
 				super.setupConnection(acceptedsocket, connection);
 			}
@@ -45,8 +47,14 @@ public class CloseListenerTest extends SakerTestCase {
 			new RMIOptions().connect(server.getLocalSocketAddress()).closeWait();
 
 			RMIConnection c = new RMIOptions().connect(server.getLocalSocketAddress());
-			c.addCloseListener(() -> serverclosecounter.getAndIncrement());
+			c.addCloseListener(() -> {
+				int nval = serverclosecounter.getAndIncrement();
+				System.out.println("CloseListenerTest.testServer() conn-listener " + nval);
+			});
 			c.closeWait();
+
+			//close wait on the server, so all listeners are called before we check the value below
+			server.closeWait();
 		}
 		assertEquals(serverclosecounter.getAndSet(0), 5);
 
