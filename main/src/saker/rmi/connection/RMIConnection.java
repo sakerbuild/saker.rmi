@@ -946,7 +946,7 @@ public final class RMIConnection implements AutoCloseable {
 
 	void clientClose() {
 		exitMessage = "Connection closed remotely.";
-		abort();
+		abort(false);
 	}
 
 	void streamError(RMIStream stream, Throwable exc) {
@@ -959,7 +959,7 @@ public final class RMIConnection implements AutoCloseable {
 		}
 		exitMessage = "Connection stream error. (" + exc + ")";
 		try {
-			abort();
+			abort(true);
 		} catch (Exception abortexc) {
 			IOUtils.addExc(abortexc, runexc);
 
@@ -1123,7 +1123,7 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	private void closeImpl() {
-		abort();
+		abort(false);
 	}
 
 	private void checkClosed() {
@@ -1142,15 +1142,26 @@ public final class RMIConnection implements AutoCloseable {
 	/**
 	 * Signals that the connection should be closed. This method may not actually close the connection, as some
 	 * concurrent requests may keep it alive for a while.
+	 * 
+	 * @param onerror
+	 *            <code>true</code> if aborting is performed due to an error.
 	 */
-	private void abort() {
+	private void abort(boolean onerror) {
 		if (aborting) {
-			return;
+			if (!onerror) {
+				return;
+			}
+			//else if aborting due to an error, then continue
+		} else {
+			//set the aborting flag while locked, so no more variables and other state related objects are added to the connection
+			//(if we didn't lock, then we risk new requests/variables/etc... being added after setting the aborting flag
+			synchronized (stateModifyLock) {
+				aborting = true;
+			}
 		}
-		//set the aborting flag while locked, so no more variables and other state related objects are added to the connection
-		//(if we didn't lock, then we risk new requests/variables/etc... being added after setting the aborting flag
-		synchronized (stateModifyLock) {
-			aborting = true;
+		if (onerror) {
+			//close down pending requests
+			requestHandler.close();
 		}
 		//use a copy collection to be able to remove from the real collection while the variables are closing
 		List<RMIVariables> vars = ImmutableUtils.makeImmutableList(variablesByLocalId.values());
@@ -1166,7 +1177,7 @@ public final class RMIConnection implements AutoCloseable {
 		if (emptyvars) {
 			//variables are empty
 			//we need to call closeIfAbortingAndNoVariablesLocked() in this branch
-			//as that will no be called in closeVariables(RMIVariables), as no variables were closed this time
+			//as that will not be called in closeVariables(RMIVariables), as no variables were closed this time
 
 			//if there is at least 1 variable closed during this method call, then that will call closeIfAbortingAndNoVariablesLocked()
 			//when it gets closed
