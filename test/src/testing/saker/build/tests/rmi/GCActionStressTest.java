@@ -1,7 +1,16 @@
 package testing.saker.build.tests.rmi;
 
+import java.lang.management.ManagementFactory;
+import java.lang.ref.Reference;
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.WeakReference;
+import java.util.Collection;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
+import com.sun.management.HotSpotDiagnosticMXBean;
+
+import saker.rmi.connection.RMIConnection;
 import saker.rmi.connection.RMITestUtil;
 import saker.util.ReflectUtils;
 import saker.util.thread.ThreadUtils;
@@ -57,6 +66,8 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 
 	@Override
 	protected void runVariablesTestImpl() throws Exception {
+		ReferenceQueue<Object> refqueue = new ReferenceQueue<>();
+		Collection<WeakReference<Object>> objectrefs = ConcurrentHashMap.newKeySet();
 		try (ThreadWorkPool pool = ThreadUtils.newDynamicWorkPool()) {
 			//do it in parallel so gc and requests and things can be interleaved
 			for (int i = 0; i < 8; i++) {
@@ -64,12 +75,16 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 				pool.offer(() -> {
 					Stub stub = (Stub) clientVariables.newRemoteInstance(
 							ReflectUtils.getConstructorAssert(Impl.class, String.class), "run-" + finali);
+					objectrefs.add(new WeakReference<Object>(stub, refqueue));
 
 					String val = stub.getVal();
 
 					for (int j = 0; j < 50; j++) {
 						Stub theone = stub.createOne(val + "-one-" + j);
 						Impl impl = new Impl(val + "-impl-" + j);
+
+						objectrefs.add(new WeakReference<Object>(impl, refqueue));
+
 						Stub pt = theone.passThrough(impl);
 						assertIdentityEquals(pt, impl);
 						impl = null;
@@ -96,6 +111,37 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 			}
 		}
 
+		for (int i = 0; i < 100 && !objectrefs.isEmpty(); i++) {
+			System.out.println("GCActionStressTest.runVariablesTestImpl() object refs count: " + objectrefs.size());
+			System.gc();
+			while (true) {
+				Reference<? extends Object> ref = refqueue.remove(10);
+				if (ref == null) {
+					break;
+				}
+				objectrefs.remove(ref);
+			}
+		}
+		if (!objectrefs.isEmpty()) {
+			StringBuilder alivesb = new StringBuilder();
+			alivesb.append("Alive objects: ");
+			for (WeakReference<Object> ref : objectrefs) {
+				Object obj = ref.get();
+				if (obj == null) {
+					continue;
+				}
+				alivesb.append(obj.toString());
+				alivesb.append(" remote: ");
+				alivesb.append(RMIConnection.isRemoteObject(obj));
+				alivesb.append(", ");
+			}
+			HotSpotDiagnosticMXBean mxBean = ManagementFactory.newPlatformMXBeanProxy(
+					ManagementFactory.getPlatformMBeanServer(), "com.sun.management:type=HotSpotDiagnostic",
+					HotSpotDiagnosticMXBean.class);
+			mxBean.dumpHeap("C:\\Bence\\temp\\GCActionStressTest_heap.hprof", true);
+			throw fail(alivesb.toString());
+		}
+
 		//if gc works correctly, the live objects of the RMIVariables should be cleared after enough garbage collection
 		System.out.println("GCActionStressTest.runVariablesTestImpl() check alive objects");
 		for (int i = 0; i < 100; i++) {
@@ -108,7 +154,7 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 				break;
 			}
 			System.gc();
-			Thread.sleep(50);
+			Thread.sleep(20);
 		}
 		System.out.println("GCActionStressTest.runVariablesTestImpl() done checking alive objects");
 

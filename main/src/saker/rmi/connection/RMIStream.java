@@ -403,27 +403,29 @@ final class RMIStream implements Closeable {
 		//we don't have to do notifications for the next action in case we have no more pending requests,
 		//as the next action is a clean one
 		public void referencesReleased(RMIVariables vars, int localid, int count, ReferencesReleasedAction nextaction) {
+			//always set the next pointer so the chain doesn't break
+			if (!ARFU_next.compareAndSet(this, null, nextaction)) {
+				//next can only be set once, so do a check for this via compareAndSet
+				throw new IllegalStateException(
+						"Duplicate use of reference release action, failed to set next action.");
+			}
+
 			if (isAllPendingRequestsDone()) {
 				vars.referencesReleased(localid, count);
 				//clear the prev action of the next one, as we have no more pending requests
-				ARFU_prev.compareAndSet(nextaction, this, null);
+				nextaction.prev = null;
 				return;
 			}
 			ReleaseData ndata = new ReleaseData(vars, localid, count);
-			if (!ARFU_releaseData.compareAndSet(this, null, ndata)) {
-				throw new IllegalStateException("Duplicate use of reference release action: " + ndata);
-			}
+			//doesn't need to use the atomic setter for this, as we already check that this is only set a single time using the field next
+			this.releaseData = ndata;
 			//query the pending requests again in case it was concurrently modified
 			if (!isAllPendingRequestsDone()) {
 				//okay, somebody else will do the garbage collection
-				if (!ARFU_next.compareAndSet(this, null, nextaction)) {
-					throw new IllegalStateException(
-							"Duplicate use of reference release action, failed to set next action.");
-				}
 				return;
 			}
 			//clear the prev action of the next one, as we have no more pending requests
-			ARFU_prev.compareAndSet(nextaction, this, null);
+			nextaction.prev = null;
 
 			//the pending requests are done, and it won't increase, as this function is called on a single thread that manages its increase
 			ReleaseData prev = ARFU_releaseData.getAndSet(this, null);
@@ -2311,6 +2313,8 @@ final class RMIStream implements Closeable {
 		} finally {
 			gcaction.decreasePendingRequestCount();
 		}
+		//release the action for garbage collection
+		gcaction = null;
 		instantiateAndWriteNewInstanceCall(reqid, variables, constructor, args);
 	}
 
@@ -2375,6 +2379,8 @@ final class RMIStream implements Closeable {
 		} finally {
 			gcaction.decreasePendingRequestCount();
 		}
+		//release the action for garbage collection
+		gcaction = null;
 		instantiateAndWriteUnknownNewInstanceCall(reqid, variables, cl, classname, argclassnames, args);
 	}
 
@@ -2441,6 +2447,8 @@ final class RMIStream implements Closeable {
 			} finally {
 				gcaction.decreasePendingRequestCount();
 			}
+			//release the action for garbage collection
+			gcaction = null;
 			variables.addOngoingRequest();
 			try {
 				ReflectUtils.invokeMethod(invokeobject, method, args);
@@ -2490,6 +2498,8 @@ final class RMIStream implements Closeable {
 		} finally {
 			gcaction.decreasePendingRequestCount();
 		}
+		//release the action for garbage collection
+		gcaction = null;
 		invokeAndWriteMethodCall(reqid, variables, invokeobject, transfermethod, args);
 	}
 
