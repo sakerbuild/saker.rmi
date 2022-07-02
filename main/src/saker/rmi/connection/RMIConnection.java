@@ -18,6 +18,7 @@ package saker.rmi.connection;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.Thread.State;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -202,6 +203,19 @@ public final class RMIConnection implements AutoCloseable {
 	 * A list of threads that are waiting for the started task threads to exit.
 	 */
 	private volatile Thread[] exitWaitThreads = {};
+
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	private static final AtomicReferenceFieldUpdater<RMIConnection, WeakReference<Thread>> ARFU_noMoreRunningStreamTaskHandlerThread = (AtomicReferenceFieldUpdater) AtomicReferenceFieldUpdater
+			.newUpdater(RMIConnection.class, WeakReference.class, "noMoreRunningStreamTaskHandlerThread");
+
+	/**
+	 * Reference to the thread that calls {@link #handleNoMoreRunningStreamTasks()}.
+	 * <p>
+	 * This thread also needs to be waited for during closing.
+	 * <p>
+	 * Use a weak reference so the Thread instance itself isn't kept in memory if it terminated.
+	 */
+	private volatile WeakReference<Thread> noMoreRunningStreamTaskHandlerThread;
 
 	RMIConnection(RMIOptions options, short protocolversion) {
 		this.protocolVersion = protocolversion;
@@ -637,6 +651,7 @@ public final class RMIConnection implements AutoCloseable {
 		while (true) {
 			threads = this.exitWaitThreads;
 			if (threads == EXIT_WAIT_THREADS_MARKER_EXITED) {
+				ThreadUtils.joinThreads(ObjectUtils.getReference(noMoreRunningStreamTaskHandlerThread));
 				return;
 			}
 			if (Thread.interrupted()) {
@@ -655,10 +670,17 @@ public final class RMIConnection implements AutoCloseable {
 					//failed to update the threads variable, re-read it again, and restart the loop
 					threads = this.exitWaitThreads;
 					if (threads == EXIT_WAIT_THREADS_MARKER_EXITED) {
-						//the tasks exited meanwhile, so we can ignore the interruption, and exit successfully
-						//reinterrupt, as we consumed it in the call above
-						currentthread.interrupt();
-						return;
+						//the tasks exited meanwhile, so we can ignore the interruption, and exit successfully if all is finished
+
+						Thread handlerthread = ObjectUtils.getReference(noMoreRunningStreamTaskHandlerThread);
+						if (handlerthread == null || handlerthread.getState() == State.TERMINATED) {
+							//the handler thread is finished too,
+							//reinterrupt, as we consumed it in the call above
+							currentthread.interrupt();
+							return;
+						}
+						//the handler thread is still active, therefore the exit is not clean yet, throw the exception
+						throw new InterruptedException("Waiting for RMI tasks interrupted.");
 					}
 					//reinit iter variable
 					i = 0;
@@ -833,8 +855,7 @@ public final class RMIConnection implements AutoCloseable {
 			try {
 				task.run();
 			} finally {
-				int c = AIFU_offeredStreamTaskCount.decrementAndGet(this);
-				if (c == 0) {
+				if (AIFU_offeredStreamTaskCount.decrementAndGet(this) == 0) {
 					handleNoMoreRunningStreamTasks();
 				}
 			}
@@ -846,6 +867,11 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	private void handleNoMoreRunningStreamTasks() {
+		if (!ARFU_noMoreRunningStreamTaskHandlerThread.compareAndSet(this, null,
+				new WeakReference<>(Thread.currentThread()))) {
+			//this method is already called by somebody else, therefore we don't need to do it
+			return;
+		}
 		//this was the last stream task to run
 		//stream reading tasks have already exited (or this was it)
 		//no streams running -> no more requests will be added
