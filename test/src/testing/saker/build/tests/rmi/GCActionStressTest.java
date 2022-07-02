@@ -1,14 +1,11 @@
 package testing.saker.build.tests.rmi;
 
-import java.lang.management.ManagementFactory;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
-
-import com.sun.management.HotSpotDiagnosticMXBean;
 
 import saker.rmi.connection.RMIConnection;
 import saker.rmi.connection.RMITestUtil;
@@ -135,10 +132,6 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 				alivesb.append(RMIConnection.isRemoteObject(obj));
 				alivesb.append(", ");
 			}
-			HotSpotDiagnosticMXBean mxBean = ManagementFactory.newPlatformMXBeanProxy(
-					ManagementFactory.getPlatformMBeanServer(), "com.sun.management:type=HotSpotDiagnostic",
-					HotSpotDiagnosticMXBean.class);
-			mxBean.dumpHeap("C:\\Bence\\temp\\GCActionStressTest_heap.hprof", true);
 			throw fail(alivesb.toString());
 		}
 
