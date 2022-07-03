@@ -23,6 +23,7 @@ import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -31,6 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
@@ -50,6 +52,7 @@ import saker.util.io.DataOutputUnsyncByteArrayOutputStream;
 import saker.util.io.IOUtils;
 import saker.util.io.StreamPair;
 import saker.util.io.function.IOFunction;
+import saker.util.io.function.IOSupplier;
 import saker.util.ref.StrongSoftReference;
 import saker.util.thread.ParallelExecutionException;
 import saker.util.thread.ThreadUtils;
@@ -132,8 +135,6 @@ public final class RMIConnection implements AutoCloseable {
 		public void onConnectionClosed();
 	}
 
-	private static final AtomicIntegerFieldUpdater<RMIConnection> AIFU_streamRoundRobin = AtomicIntegerFieldUpdater
-			.newUpdater(RMIConnection.class, "streamRoundRobin");
 	private static final AtomicIntegerFieldUpdater<RMIConnection> AIFU_offeredStreamTaskCount = AtomicIntegerFieldUpdater
 			.newUpdater(RMIConnection.class, "offeredStreamTaskCount");
 	private static final AtomicIntegerFieldUpdater<RMIConnection> AIFU_variablesIdentifierCounter = AtomicIntegerFieldUpdater
@@ -144,13 +145,15 @@ public final class RMIConnection implements AutoCloseable {
 
 	private static final Thread[] EXIT_WAIT_THREADS_MARKER_EXITED = {};
 
-	@SuppressWarnings("unused")
-	private volatile int streamRoundRobin;
-
 	private final List<RMIStream> allStreams = new ArrayList<>();
 	private final Collection<AutoCloseable> connectingStreamSockets = ConcurrentHashMap.newKeySet();
-	private final AtomicInteger connectedOrConnectingStreams = new AtomicInteger(1);
-	private WeakReference<Thread> streamAddingThread;
+	/**
+	 * Atomic variable holding the number of connection attempts made to establish new streams.
+	 * <p>
+	 * Never decremented
+	 */
+	private final AtomicInteger connectedOrConnectingStreamCount = new AtomicInteger(1);
+	private Collection<WeakReference<Thread>> streamAddingThreads = ConcurrentHashMap.newKeySet();
 
 	private final RMITransferProperties properties;
 	private final ClassLoaderResolver classLoaderResolver;
@@ -218,9 +221,12 @@ public final class RMIConnection implements AutoCloseable {
 	 */
 	private volatile WeakReference<Thread> noMoreRunningStreamTaskHandlerThread;
 
+	private final IOSupplier<? extends StreamPair> streamConnector;
+
 	RMIConnection(RMIOptions options, short protocolversion) {
 		this.protocolVersion = protocolversion;
 		this.allowDirectRequests = options.allowDirectRequests;
+		this.streamConnector = null;
 		RMITransferProperties properties = options.properties;
 
 		this.properties = properties;
@@ -258,6 +264,34 @@ public final class RMIConnection implements AutoCloseable {
 		if (options.collectStatistics) {
 			this.statistics = new RMIStatistics();
 		}
+
+		this.streamConnector = new IOSupplier<StreamPair>() {
+			private final PendingStreamTracker pendingTracker = new PendingStreamTracker() {
+				@Override
+				public boolean add(AutoCloseable s) {
+					//lock on state modify lock, so if close is being called concurrently,
+					//we still add the socket to the collection
+					synchronized (stateModifyLock) {
+						if (aborting) {
+							return false;
+						}
+						connectingStreamSockets.add(s);
+					}
+					return true;
+				}
+
+				@Override
+				public void remove(AutoCloseable s) {
+					connectingStreamSockets.remove(s);
+				}
+			};
+
+			@Override
+			public StreamPair get() throws IOException {
+				return streamconnector.apply(pendingTracker);
+			}
+		};
+
 		StreamPair streamstoclose = streams;
 		RMIStream streamclose = null;
 		IOException exc = null;
@@ -280,10 +314,7 @@ public final class RMIConnection implements AutoCloseable {
 			RMIStream stream = new RMIStream(this, sockin, sockout);
 			streamclose = stream;
 
-			AIFU_offeredStreamTaskCount.incrementAndGet(this);
-
 			addStream(stream);
-			postAddAdditionalStreams(streamconnector);
 
 			streamstoclose = null;
 			streamclose = null;
@@ -359,28 +390,30 @@ public final class RMIConnection implements AutoCloseable {
 			throw new IllegalArgumentException("Empty or null variables name. (" + name + ")");
 		}
 		checkClosed();
-		NamedRMIVariables got = variablesByNames.get(name);
-		if (got != null) {
-			got.increaseReference();
-			return got;
+		NamedRMIVariables result = variablesByNames.get(name);
+		if (result != null) {
+			result.increaseReference();
+			return result;
 		}
 		int identifier = AIFU_variablesIdentifierCounter.getAndIncrement(this);
+		RMIStream stream;
 		synchronized (stateModifyLock) {
 			checkAborting();
 			synchronized (getNamedVariablesGetLock(name)) {
-				got = variablesByNames.get(name);
-				if (got != null) {
-					got.increaseReference();
-					return got;
+				result = variablesByNames.get(name);
+				if (result != null) {
+					result.increaseReference();
+					return result;
 				}
-				RMIStream stream = getStream();
+				stream = getStream();
 				int varsremoteid = stream.createNewVariables(name, identifier);
-				got = new NamedRMIVariables(name, identifier, varsremoteid, this, stream);
-				variablesByNames.put(name, got);
+				result = new NamedRMIVariables(name, identifier, varsremoteid, this, stream);
+				variablesByNames.put(name, result);
 			}
-			variablesByLocalId.put(identifier, got);
-			return got;
+			variablesByLocalId.put(identifier, result);
 		}
+		stream.associateVariables(result);
+		return result;
 	}
 
 	/**
@@ -412,6 +445,7 @@ public final class RMIConnection implements AutoCloseable {
 			variablesByLocalId.put(identifier, result);
 			aborting = this.aborting;
 		}
+		stream.associateVariables(result);
 		if (aborting) {
 			result.close();
 			throw new RMIIOFailureException("Connection aborting.");
@@ -906,43 +940,199 @@ public final class RMIConnection implements AutoCloseable {
 		return properties;
 	}
 
-	void addStream(RMIStream stream) throws RMIRuntimeException, IOException {
+	void addStream(RMIStream stream) throws IOException {
 		synchronized (stateModifyLock) {
 			if (aborting) {
 				//the connection is already aborting, ignore the stream addition, silently close it
 				IOUtils.close(stream);
 				return;
 			}
-			streamRoundRobin = allStreams.size();
 			allStreams.add(stream);
 		}
 		stream.start();
 	}
 
 	void removeStream(RMIStream stream) throws IOException {
-		boolean removed;
 		synchronized (stateModifyLock) {
-			removed = allStreams.remove(stream);
-		}
-		if (removed) {
-			connectedOrConnectingStreams.decrementAndGet();
+			allStreams.remove(stream);
 		}
 		IOUtils.close(stream);
 	}
 
 	private RMIStream getStream() {
 		checkClosed();
+
+		RMIStream minstream;
+		boolean connect = false;
 		synchronized (stateModifyLock) {
-			return getStreamStateModifyLocked();
+			//choose from existing streams
+			Iterator<RMIStream> it = allStreams.iterator();
+			if (!it.hasNext()) {
+				if (streamConnector != null && allStreams.size() < maxStreamCount) {
+					int cocstreams = connectedOrConnectingStreamCount.getAndIncrement();
+					if (cocstreams >= maxStreamCount) {
+						//cant connect to any more streams
+						throw new RMIIOFailureException("No stream found.");
+					}
+
+					minstream = null;
+					connect = true;
+				} else {
+					throw new RMIIOFailureException("No stream found.");
+				}
+			} else {
+				minstream = it.next();
+				int minc = minstream.getAssociatedRMIVariablesCount();
+				if (minc == 0) {
+					//no variables are used on this stream, can return it without checking the others
+					return minstream;
+				}
+				if (!it.hasNext()) {
+					if (streamConnector != null && allStreams.size() < maxStreamCount) {
+						int cocstreams = connectedOrConnectingStreamCount.getAndIncrement();
+						if (cocstreams < maxStreamCount) {
+							//can connect to more streams, try it
+							connect = true;
+						} else {
+							return minstream;
+						}
+					} else {
+						return minstream;
+					}
+				} else {
+					do {
+						RMIStream stream = it.next();
+						int currentcount = stream.getAssociatedRMIVariablesCount();
+						if (currentcount == 0) {
+							return stream;
+						}
+						if (currentcount < minc) {
+							minc = currentcount;
+							minstream = stream;
+						}
+					} while (it.hasNext());
+
+					//all streams have at least 1 RMIVariables associated with them
+					//try to connect a new one if allowed, otherwise return the found one
+					if (streamConnector == null || allStreams.size() >= maxStreamCount) {
+						return minstream;
+					}
+
+					int cocstreams = connectedOrConnectingStreamCount.getAndIncrement();
+					if (cocstreams >= maxStreamCount) {
+						//cant connect to any more streams
+						return minstream;
+					}
+					connect = true;
+				}
+			}
 		}
+		if (connect) {
+			//if connection fails, then return the found min stream (if any)
+			//we need to do the connecting on a separate thread/task as the task needs to be interruptible
+			//this won't really cause a real performance issue, 
+			// - as streams are usually connected upfront
+			// - when virtual threads arrive, they will be cheap to start
+			// - when thread pools are used, no new thread need to be started
+
+			Semaphore semaphore = new Semaphore(0);
+			RMIStream[] connectedstream = { null };
+			Throwable[] connecterror = { null };
+			RMIStream finalminstream = minstream;
+			offerStreamTask(() -> {
+				if (aborting) {
+					//aborting the connection, don't connect
+					return;
+				}
+				WeakReference<Thread> addingthreadref = new WeakReference<>(Thread.currentThread());
+				streamAddingThreads.add(addingthreadref);
+				StreamPair streampair;
+				try {
+					streampair = this.streamConnector.get();
+					if (streampair == null) {
+						throw new NullPointerException("Failed to create RMI stream pair.");
+					}
+					RMIStream nstream = new RMIStream(this, streampair);
+					try {
+						addStream(nstream);
+					} catch (Exception e) {
+						//close the stream if we failed to add it
+						IOUtils.addExc(e, IOUtils.closeExc(nstream));
+						throw e;
+					}
+					connectedstream[0] = nstream;
+				} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
+						| ServiceConfigurationError e) {
+					//set the connecting count to the max stream count so we don't attempt to establish new connections, 
+					//as this one failed, and we don't expect others to succeed
+					connectedOrConnectingStreamCount.set(maxStreamCount);
+
+					if (aborting) {
+						// handled below
+					} else if (finalminstream != null) {
+						// the found stream will be returned
+					} else {
+						// notify the user of the RMI library about the exception
+						invokeIOErrorListeners(e, false);
+					}
+					connecterror[0] = e;
+				} catch (Throwable e) {
+					connecterror[0] = e;
+				} finally {
+					streamAddingThreads.remove(addingthreadref);
+					semaphore.release();
+					//clear the interrupted flag so it doesnt leak into the caller thread, 
+					//as we manage the interrupt status fo this task
+					Thread.interrupted();
+				}
+			});
+			try {
+				semaphore.acquire();
+			} catch (InterruptedException e) {
+				//reinterrupt so the interrupt status of the thread is not lost
+				Thread.currentThread().interrupt();
+				throw new RMIIOFailureException("Failed to connect new stream.", e);
+			}
+			if (connecterror[0] != null) {
+				if (aborting) {
+					//ignorable if we're already aborting
+					throw new RMIIOFailureException("Connection aborting.", connecterror[0]);
+				}
+
+				//ignore error, and return the found stream if any
+				if (minstream == null) {
+					throw new RMIIOFailureException("Failed to connect new stream.", connecterror[0]);
+				}
+				return minstream;
+			}
+			if (connectedstream[0] == null) {
+				if (aborting) {
+					throw new RMIIOFailureException("Connection aborting.");
+				}
+				//this shouldn't happen, as either the stream or the exception should be set
+				if (minstream != null) {
+					//return the min stream so we don't fail because of this, but this is an implementation error nonetheless
+					return minstream;
+				}
+				throw new RMIIOFailureException("Failed to connect new stream. (unknown error)");
+			}
+
+			return connectedstream[0];
+		}
+		return minstream;
 	}
 
-	private RMIStream getStreamStateModifyLocked() {
-		//TODO open streams on demand, lazily
-		if (allStreams.isEmpty()) {
-			throw new RMIIOFailureException("No stream found.");
+	/**
+	 * Gets the current number of active streams.
+	 * <p>
+	 * For testing purposes only.
+	 * 
+	 * @return The stream count.
+	 */
+	int getStreamCount() {
+		synchronized (stateModifyLock) {
+			return allStreams.size();
 		}
-		return allStreams.get(AIFU_streamRoundRobin.getAndIncrement(this) % allStreams.size());
 	}
 
 	void clientClose() {
@@ -1134,7 +1324,6 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	private void checkAborting() {
-		//holds lock for stateModifyLock
 		if (aborting) {
 			throw new RMIIOFailureException("Connection aborting.");
 		}
@@ -1194,22 +1383,6 @@ public final class RMIConnection implements AutoCloseable {
 		return ThreadUtils.newDynamicWorkPool(threadgroup, "RMI-worker-");
 	}
 
-	/**
-	 * Increment {@link #offeredStreamTaskCount} before calling this.
-	 */
-	private void postAddAdditionalStreams(
-			IOFunction<? super PendingStreamTracker, ? extends StreamPair> streamconnector) {
-		this.taskExecutor.execute(() -> {
-			try {
-				addAdditionalStreams(streamconnector);
-			} finally {
-				if (AIFU_offeredStreamTaskCount.decrementAndGet(this) == 0) {
-					handleNoMoreRunningStreamTasks();
-				}
-			}
-		});
-	}
-
 	void invokeIOErrorListeners(Throwable exc, boolean storeexception) {
 		Collection<IOErrorListener> ioerrorlistenerscopy;
 		synchronized (errorListeners) {
@@ -1257,36 +1430,38 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	private RMIVariables newUnnamedRemoteVariables(int remoteid, RMIStream stream) {
+		RMIVariables result;
 		synchronized (stateModifyLock) {
 			checkAborting();
-			RMIVariables got = new RMIVariables(AIFU_variablesIdentifierCounter.getAndIncrement(this), remoteid, this,
-					stream);
-			variablesByLocalId.put(got.getLocalIdentifier(), got);
-			return got;
+			result = new RMIVariables(AIFU_variablesIdentifierCounter.getAndIncrement(this), remoteid, this, stream);
+			variablesByLocalId.put(result.getLocalIdentifier(), result);
 		}
+		stream.associateVariables(result);
+		return result;
 	}
 
 	private RMIVariables newNamedRemoteVariables(String name, int remoteid, RMIStream stream) throws IOException {
+		NamedRMIVariables result;
 		synchronized (stateModifyLock) {
 			checkAborting();
-			NamedRMIVariables got;
 			synchronized (getNamedVariablesGetLock(name)) {
-				got = variablesByNames.get(name);
-				if (got != null) {
-					return got;
+				result = variablesByNames.get(name);
+				if (result != null) {
+					return result;
 				}
 
-				got = new NamedRMIVariables(name, AIFU_variablesIdentifierCounter.getAndIncrement(this), remoteid, this,
-						stream);
-				RMIVariables prev = variablesByNames.putIfAbsent(name, got);
+				result = new NamedRMIVariables(name, AIFU_variablesIdentifierCounter.getAndIncrement(this), remoteid,
+						this, stream);
+				RMIVariables prev = variablesByNames.putIfAbsent(name, result);
 				if (prev != null) {
-					IOException cause = IOUtils.closeExc(got);
+					IOException cause = IOUtils.closeExc(result);
 					throw new IOException("Variables with name defined more than once: " + name, cause);
 				}
 			}
-			variablesByLocalId.put(got.getLocalIdentifier(), got);
-			return got;
+			variablesByLocalId.put(result.getLocalIdentifier(), result);
 		}
+		stream.associateVariables(result);
+		return result;
 	}
 
 	private Object getNamedVariablesGetLock(String name) {
@@ -1311,9 +1486,17 @@ public final class RMIConnection implements AutoCloseable {
 
 		closeexc = IOUtils.closeExc(closeexc, connectingStreamSockets);
 
-		//interrupt the stream adding thread if any
-		//(the interrupt flag is cleared by us, so it won't interfere with shared thread pool threads)
-		ThreadUtils.interruptThread(ObjectUtils.getReference(streamAddingThread));
+		//interrupt the stream adding threads if any
+		while (true) {
+			Iterator<WeakReference<Thread>> it = streamAddingThreads.iterator();
+			if (!it.hasNext()) {
+				break;
+			}
+			do {
+				ThreadUtils.interruptThread(ObjectUtils.getReference(it.next()));
+				it.remove();
+			} while (it.hasNext());
+		}
 
 		variablesByNames.clear();
 		contextVariables.clear();
@@ -1344,76 +1527,6 @@ public final class RMIConnection implements AutoCloseable {
 		}
 		if (closeexc != null) {
 			invokeIOErrorListeners(closeexc);
-		}
-	}
-
-	private void addAdditionalStreams(IOFunction<? super PendingStreamTracker, ? extends StreamPair> streamconnector) {
-		//set the thread field while locked, so we dont run into a race condition
-		//when the connection is quickly closed, yet this thread is kept alive
-		synchronized (stateModifyLock) {
-			if (aborting) {
-				return;
-			}
-			this.streamAddingThread = new WeakReference<>(Thread.currentThread());
-		}
-
-		try {
-			PendingStreamTracker pendingtracker = new PendingStreamTracker() {
-				@Override
-				public boolean add(AutoCloseable s) {
-					//lock on state modify lock, so if close is being called concurrently,
-					//we still add the socket to the collection
-					synchronized (stateModifyLock) {
-						if (aborting) {
-							return false;
-						}
-						connectingStreamSockets.add(s);
-					}
-					return true;
-				}
-
-				@Override
-				public void remove(AutoCloseable s) {
-					connectingStreamSockets.remove(s);
-				}
-			};
-			while (!aborting) {
-				int cocstreams = connectedOrConnectingStreams.getAndIncrement();
-				if (cocstreams >= maxStreamCount) {
-					//dont need to connect to any more streams
-					connectedOrConnectingStreams.decrementAndGet();
-					break;
-				}
-
-				StreamPair streampair;
-				try {
-					streampair = streamconnector.apply(pendingtracker);
-				} catch (IOException e) {
-					if (aborting) {
-						//ignorable if we're already aborting
-						break;
-					}
-					throw e;
-				}
-				if (streampair == null) {
-					if (aborting) {
-						//no streams were created, ignorable if aborting
-						break;
-					}
-					throw new NullPointerException("Failed to create RMI stream pair.");
-				}
-
-				RMIStream nstream = new RMIStream(this, streampair);
-				addStream(nstream);
-			}
-		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
-				| ServiceConfigurationError e) {
-			invokeIOErrorListeners(e, false);
-		} finally {
-			this.streamAddingThread = null;
-			//clear the interrupted flag of this thread, to not interfere with other tasks in case
-			//this function runs as part of a thread pool that is kept alive after the connection closes
-			Thread.interrupted();
 		}
 	}
 

@@ -24,12 +24,14 @@ import saker.rmi.connection.RMIConnection;
 import saker.rmi.connection.RMIConnection.IOErrorListener;
 import saker.rmi.connection.RMIOptions;
 import saker.rmi.connection.RMIServer;
+import saker.rmi.connection.RMITestUtil;
 import saker.rmi.connection.RMIVariables;
 import testing.saker.SakerTest;
 import testing.saker.SakerTestCase;
 
 @SakerTest
 public class ServerConnectRMITest extends SakerTestCase {
+
 	public interface Stub {
 		public String f(String s);
 	}
@@ -46,23 +48,77 @@ public class ServerConnectRMITest extends SakerTestCase {
 
 	@Override
 	public void runTest(Map<String, String> parameters) throws Throwable {
-		RMIOptions options = getOptions();
+		testMultiStream();
+		testSingleStream();
+	}
+
+	private static void testSingleStream() throws Exception {
+		RMIOptions options = new RMIOptions().classLoader(ServerConnectRMITest.class.getClassLoader())
+				.maxStreamCount(1);
+		try (RMIServer server = new RMIServerWithOptions(options)) {
+			server.start();
+			try (RMIConnection connection = options.connect(server.getLocalSocketAddress())) {
+				System.err.println("Opened connection: " + Integer.toHexString(System.identityHashCode(connection)));
+				for (int j = 0; j < 4; j++) {
+					testConnection(connection);
+				}
+				//expect the connection to have only a single stream, as only at most one RMIVariables are alive at one point
+				assertEquals(RMITestUtil.getConnectionStreamCount(connection), 1);
+
+				//check that creating multiple RMI variables won't cause new streams to be created, as the max is 1
+				try (RMIVariables vars1 = connection.newVariables()) {
+					Stub s = (Stub) vars1.newRemoteInstance(Impl.class);
+					assertEquals(s.f("x"), "xx");
+					try (RMIVariables vars2 = connection.newVariables()) {
+						Stub s2 = (Stub) vars2.newRemoteInstance(Impl.class);
+						assertEquals(s2.f("y"), "yy");
+						try (RMIVariables vars3 = connection.newVariables()) {
+							Stub s3 = (Stub) vars3.newRemoteInstance(Impl.class);
+							assertEquals(s3.f("z"), "zz");
+						}
+					}
+				}
+				//expect that we opened one more connection for the additional RMIVariables
+				assertEquals(RMITestUtil.getConnectionStreamCount(connection), 1);
+			}
+			server.closeWait();
+		}
+	}
+
+	private static void testMultiStream() throws Exception {
+		RMIOptions options = new RMIOptions().classLoader(ServerConnectRMITest.class.getClassLoader())
+				.maxStreamCount(10);
 
 		//this is invoked multiple times as there was a bug that caused additional streams to fail
-		for (int i = 0; i < 1000; i++) {
+		for (int i = 0; i < 200; i++) {
 			System.err.println();
 			System.err.println("Run " + (i + 1));
-			try (RMIServer server = new RMIServer() {
-				@Override
-				protected RMIOptions getRMIOptionsForAcceptedConnection(Socket acceptedsocket, int protocolversion)
-						throws IOException, RuntimeException {
-					return options;
-				}
-			}) {
+			try (RMIServer server = new RMIServerWithOptions(options)) {
 				server.start();
-				try (RMIConnection conn = options.connect(server.getLocalSocketAddress())) {
-					System.err.println("Opened connection: " + Integer.toHexString(System.identityHashCode(conn)));
-					testConnection(conn);
+				try (RMIConnection connection = options.connect(server.getLocalSocketAddress())) {
+					System.err
+							.println("Opened connection: " + Integer.toHexString(System.identityHashCode(connection)));
+					for (int j = 0; j < 4; j++) {
+						testConnection(connection);
+					}
+					//expect the connection to have only a single stream, as only at most one RMIVariables is alive at one point
+					assertEquals(RMITestUtil.getConnectionStreamCount(connection), 1);
+
+					//check that creating multiple RMI variables will cause additional streams to be connected
+					try (RMIVariables vars1 = connection.newVariables()) {
+						Stub s = (Stub) vars1.newRemoteInstance(Impl.class);
+						assertEquals(s.f("x"), "xx");
+						try (RMIVariables vars2 = connection.newVariables()) {
+							Stub s2 = (Stub) vars2.newRemoteInstance(Impl.class);
+							assertEquals(s2.f("y"), "yy");
+							try (RMIVariables vars3 = connection.newVariables()) {
+								Stub s3 = (Stub) vars3.newRemoteInstance(Impl.class);
+								assertEquals(s3.f("z"), "zz");
+							}
+						}
+					}
+					//expect that we opened one more connection for the additional RMIVariables
+					assertEquals(RMITestUtil.getConnectionStreamCount(connection), 3);
 				}
 				server.closeWait();
 			}
@@ -86,9 +142,18 @@ public class ServerConnectRMITest extends SakerTestCase {
 		return connection;
 	}
 
-	private static RMIOptions getOptions() {
-		//use more than 1 max stream count
-		return new RMIOptions().classLoader(ServerConnectRMITest.class.getClassLoader()).maxStreamCount(10);
+	private static final class RMIServerWithOptions extends RMIServer {
+		private final RMIOptions options;
+
+		private RMIServerWithOptions(RMIOptions options) throws IOException {
+			this.options = options;
+		}
+
+		@Override
+		protected RMIOptions getRMIOptionsForAcceptedConnection(Socket acceptedsocket, int protocolversion)
+				throws IOException, RuntimeException {
+			return options;
+		}
 	}
 
 }

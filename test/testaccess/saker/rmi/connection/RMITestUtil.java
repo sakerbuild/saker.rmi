@@ -28,9 +28,7 @@ import saker.util.ReflectUtils;
 import saker.util.io.ByteSource;
 import saker.util.io.DataInputUnsyncByteArrayInputStream;
 import saker.util.io.ReadWriteBufferOutputStream;
-import saker.util.io.function.IOBiConsumer;
 import saker.util.io.function.IOConsumer;
-import saker.util.io.function.IORunnable;
 import saker.util.io.function.IOTriFunction;
 
 public class RMITestUtil {
@@ -120,6 +118,10 @@ public class RMITestUtil {
 
 	public static int getLiveRemoteObjectCount(RMIVariables vars) {
 		return vars.getLiveRemoteObjectCount();
+	}
+
+	public static int getConnectionStreamCount(RMIConnection connection) {
+		return connection.getStreamCount();
 	}
 
 	public static Object getRemoteVariablesVariable(RMIConnection connection, Object proxy) {

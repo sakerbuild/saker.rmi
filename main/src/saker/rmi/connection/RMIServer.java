@@ -19,6 +19,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.net.InetAddress;
@@ -1120,44 +1121,52 @@ public class RMIServer implements AutoCloseable {
 				try {
 					//make this interruptible
 					try (ConnectionInterruptor interruptor = ConnectionInterruptor.create(sock)) {
-						RMIServer.initSocketOptions(sock);
+						try {
+							RMIServer.initSocketOptions(sock);
 
-						sock.setSoTimeout(handshakeTimeout);
-						sock.connect(address, handshakeTimeout);
+							sock.setSoTimeout(handshakeTimeout);
+							sock.connect(address, handshakeTimeout);
 
-						ssockout = sock.getOutputStream();
-						ssockin = sock.getInputStream();
-						DataOutputStream sdataos = new DataOutputStream(ssockout);
-						DataInputStream sdatais = new DataInputStream(ssockin);
-						sdataos.writeShort(RMIServer.CONNECTION_MAGIC_NUMBER);
-						sdataos.writeShort(useVersion);
-						sdataos.writeShort(RMIServer.COMMAND_NEW_STREAM);
-						sdataos.writeLong(uuid.getMostSignificantBits());
-						sdataos.writeLong(uuid.getLeastSignificantBits());
-						sdataos.flush();
+							ssockout = sock.getOutputStream();
+							ssockin = sock.getInputStream();
+							DataOutputStream sdataos = new DataOutputStream(ssockout);
+							DataInputStream sdatais = new DataInputStream(ssockin);
+							sdataos.writeShort(RMIServer.CONNECTION_MAGIC_NUMBER);
+							sdataos.writeShort(useVersion);
+							sdataos.writeShort(RMIServer.COMMAND_NEW_STREAM);
+							sdataos.writeLong(uuid.getMostSignificantBits());
+							sdataos.writeLong(uuid.getLeastSignificantBits());
+							sdataos.flush();
 
-						short smagic = sdatais.readShort();
-						if (smagic != RMIServer.CONNECTION_MAGIC_NUMBER) {
-							if (!(sock instanceof SSLSocket)) {
-								throw new IOException(
-										"Invalid magic: 0x" + Integer.toHexString(smagic) + " when connecting to: "
-												+ address + " (attempting to connect to SSL socket?)");
+							short smagic = sdatais.readShort();
+							if (smagic != RMIServer.CONNECTION_MAGIC_NUMBER) {
+								if (!(sock instanceof SSLSocket)) {
+									throw new IOException(
+											"Invalid magic: 0x" + Integer.toHexString(smagic) + " when connecting to: "
+													+ address + " (attempting to connect to SSL socket?)");
+								}
+								throw new IOException("Invalid magic: 0x" + Integer.toHexString(smagic)
+										+ " when connecting to: " + address);
 							}
-							throw new IOException("Invalid magic: 0x" + Integer.toHexString(smagic)
-									+ " when connecting to: " + address);
-						}
-						short sremoteversion = sdatais.readShort();
-						short suseversion = sremoteversion > RMIConnection.PROTOCOL_VERSION_LATEST
-								? RMIConnection.PROTOCOL_VERSION_LATEST
-								: sremoteversion;
-						if (suseversion != useVersion) {
-							throw new IOException("Invalid version detected: 0x" + Integer.toHexString(suseversion)
-									+ " when connecting to: " + address);
-						}
-						short response = sdatais.readShort();
-						if (response != RMIServer.COMMAND_NEW_STREAM_RESPONSE) {
-							throw new IOException("Failed to create new stream when connecting to: " + address
-									+ " (Error code: " + response + ")");
+							short sremoteversion = sdatais.readShort();
+							short suseversion = sremoteversion > RMIConnection.PROTOCOL_VERSION_LATEST
+									? RMIConnection.PROTOCOL_VERSION_LATEST
+									: sremoteversion;
+							if (suseversion != useVersion) {
+								throw new IOException("Invalid version detected: 0x" + Integer.toHexString(suseversion)
+										+ " when connecting to: " + address);
+							}
+							short response = sdatais.readShort();
+							if (response != RMIServer.COMMAND_NEW_STREAM_RESPONSE) {
+								throw new IOException("Failed to create new stream when connecting to: " + address
+										+ " (Error code: " + response + ")");
+							}
+						} catch (Throwable e) {
+							IOException cexc = interruptor.closeException;
+							if (cexc != null) {
+								e.addSuppressed(cexc);
+							}
+							throw e;
 						}
 					}
 					sock.setSoTimeout(0);
@@ -1168,6 +1177,12 @@ public class RMIServer implements AutoCloseable {
 					closer.remove(sock);
 				}
 				return new StreamPair(ssockin, ssockout);
+			} catch (InterruptedIOException e) {
+				exc = e;
+
+				//reinterrupt so the interruption flag for the thread is not lost
+				Thread.currentThread().interrupt();
+				throw e;
 			} catch (Throwable e) {
 				exc = e;
 				//failed to connect, or other error

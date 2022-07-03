@@ -46,6 +46,7 @@ import java.util.Optional;
 import java.util.ServiceConfigurationError;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
@@ -299,6 +300,8 @@ final class RMIStream implements Closeable {
 
 	private final ClassLoader nullClassLoader;
 	private final ClassLoaderReflectionElementSupplier nullClassLoaderSupplier;
+
+	private final Collection<RMIVariables> associatedVariables = ConcurrentHashMap.newKeySet();
 
 	private class CommandFlusher implements Closeable {
 		final StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer;
@@ -3460,13 +3463,26 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	public void writeVariablesClosed(RMIVariables variables) throws IOException {
+	void writeVariablesClosed(RMIVariables variables) throws IOException {
+		if (!associatedVariables.remove(variables)) {
+			throw new IllegalArgumentException("RMIVariables is not associated with this stream.");
+		}
 		try {
 			writeCommandCloseVariables(variables);
 		} catch (IOException e) {
 			streamError(e);
 			throw e;
 		}
+	}
+
+	void associateVariables(RMIVariables variables) {
+		if (!associatedVariables.add(variables)) {
+			throw new IllegalArgumentException("Failed to associate RMIVariables with stream.");
+		}
+	}
+
+	int getAssociatedRMIVariablesCount() {
+		return associatedVariables.size();
 	}
 
 	int createNewVariables(String name, int varlocalid) throws RMIRuntimeException {
