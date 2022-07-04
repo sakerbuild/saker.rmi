@@ -1200,11 +1200,19 @@ public class RMIServer implements AutoCloseable {
 		}
 	}
 
+	/**
+	 * Socket closer in case of interruption.
+	 * <p>
+	 * Normally, interrupting a thread that is waiting on a connecting socket won't cause the connecting to get aborted.
+	 * We use this selector to get notified about the interruption, and close the associated socket.
+	 * <p>
+	 * Some related info about this: https://github.com/NWilson/javaInterruptHook
+	 */
 	private static class ConnectionInterruptor extends AbstractSelector {
 		private static final AtomicReferenceFieldUpdater<RMIServer.ConnectionInterruptor, IOException> ARFU_closeException = AtomicReferenceFieldUpdater
 				.newUpdater(RMIServer.ConnectionInterruptor.class, IOException.class, "closeException");
 
-		protected Socket socket;
+		protected final Socket socket;
 		protected volatile IOException closeException;
 
 		private ConnectionInterruptor(Socket socket) {
