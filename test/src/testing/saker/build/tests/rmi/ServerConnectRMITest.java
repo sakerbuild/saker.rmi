@@ -22,6 +22,7 @@ import java.util.Map;
 
 import saker.rmi.connection.RMIConnection;
 import saker.rmi.connection.RMIConnection.IOErrorListener;
+import saker.util.thread.ThreadUtils;
 import saker.rmi.connection.RMIOptions;
 import saker.rmi.connection.RMIServer;
 import saker.rmi.connection.RMITestUtil;
@@ -130,8 +131,9 @@ public class ServerConnectRMITest extends SakerTestCase {
 	private static void testExecutor() throws Exception {
 		RMIOptions options = new RMIOptions().classLoader(ServerConnectRMITest.class.getClassLoader())
 				.maxStreamCount(1);
+		ThreadExecutor executor = new ThreadExecutor();
 		try (RMIServer server = new RMIServerWithOptions(options)) {
-			server.start(new ThreadExecutor());
+			server.start(executor);
 			try (RMIConnection connection = options.connect(server.getLocalSocketAddress())) {
 				System.err.println("Opened connection: " + Integer.toHexString(System.identityHashCode(connection)));
 				for (int j = 0; j < 4; j++) {
@@ -158,6 +160,7 @@ public class ServerConnectRMITest extends SakerTestCase {
 			}
 			server.closeWait();
 		}
+		ThreadUtils.joinThreads(executor.getThreads());
 	}
 
 	private static RMIConnection testConnection(RMIConnection connection)
