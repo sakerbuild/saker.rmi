@@ -1,14 +1,20 @@
 package testing.saker.build.tests.rmi;
 
+import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
+import java.nio.file.Paths;
 import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
+import com.sun.management.HotSpotDiagnosticMXBean;
+
 import saker.rmi.connection.RMIConnection;
 import saker.rmi.connection.RMITestUtil;
+import saker.util.ObjectUtils;
 import saker.util.ReflectUtils;
 import saker.util.thread.ThreadUtils;
 import saker.util.thread.ThreadUtils.ThreadWorkPool;
@@ -132,6 +138,9 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 				alivesb.append(RMIConnection.isRemoteObject(obj));
 				alivesb.append(", ");
 			}
+			//dump the heap to help diagnosing the problem.
+			dumpHeap();
+
 			throw fail(alivesb.toString());
 		}
 
@@ -163,6 +172,24 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 				"client remote objects still alive: " + clocal + "/" + slocal + " - " + cremote + "/" + sremote);
 		assertEquals(sremote, 0,
 				"server remote objects still alive: " + clocal + "/" + slocal + " - " + cremote + "/" + sremote);
+	}
+
+	private static void dumpHeap() {
+		try {
+			String tempdir = System.getProperty("java.io.tmpdir");
+			if (!ObjectUtils.isNullOrEmpty(tempdir)) {
+				HotSpotDiagnosticMXBean mxBean = ManagementFactory.newPlatformMXBeanProxy(
+						ManagementFactory.getPlatformMBeanServer(), "com.sun.management:type=HotSpotDiagnostic",
+						HotSpotDiagnosticMXBean.class);
+				String dumppath = Paths.get(tempdir).resolve("GCActionStressTest_heap.hprof").toAbsolutePath()
+						.normalize().toString();
+				System.out.println("Dumping heap to: " + dumppath);
+				mxBean.dumpHeap(dumppath, true);
+				System.out.println("Dumped heap to: " + dumppath);
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
 	}
 
 	@Override

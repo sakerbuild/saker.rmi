@@ -28,6 +28,7 @@ import saker.rmi.connection.RMITestUtil;
 import saker.rmi.connection.RMIVariables;
 import testing.saker.SakerTest;
 import testing.saker.SakerTestCase;
+import testing.saker.build.tests.rmi.BaseRMITestCase.ThreadExecutor;
 
 @SakerTest
 public class ServerConnectRMITest extends SakerTestCase {
@@ -50,6 +51,7 @@ public class ServerConnectRMITest extends SakerTestCase {
 	public void runTest(Map<String, String> parameters) throws Throwable {
 		testMultiStream();
 		testSingleStream();
+		testExecutor();
 	}
 
 	private static void testSingleStream() throws Exception {
@@ -122,6 +124,39 @@ public class ServerConnectRMITest extends SakerTestCase {
 				}
 				server.closeWait();
 			}
+		}
+	}
+
+	private static void testExecutor() throws Exception {
+		RMIOptions options = new RMIOptions().classLoader(ServerConnectRMITest.class.getClassLoader())
+				.maxStreamCount(1);
+		try (RMIServer server = new RMIServerWithOptions(options)) {
+			server.start(new ThreadExecutor());
+			try (RMIConnection connection = options.connect(server.getLocalSocketAddress())) {
+				System.err.println("Opened connection: " + Integer.toHexString(System.identityHashCode(connection)));
+				for (int j = 0; j < 4; j++) {
+					testConnection(connection);
+				}
+				//expect the connection to have only a single stream, as only at most one RMIVariables are alive at one point
+				assertEquals(RMITestUtil.getConnectionStreamCount(connection), 1);
+
+				//check that creating multiple RMI variables won't cause new streams to be created, as the max is 1
+				try (RMIVariables vars1 = connection.newVariables()) {
+					Stub s = (Stub) vars1.newRemoteInstance(Impl.class);
+					assertEquals(s.f("x"), "xx");
+					try (RMIVariables vars2 = connection.newVariables()) {
+						Stub s2 = (Stub) vars2.newRemoteInstance(Impl.class);
+						assertEquals(s2.f("y"), "yy");
+						try (RMIVariables vars3 = connection.newVariables()) {
+							Stub s3 = (Stub) vars3.newRemoteInstance(Impl.class);
+							assertEquals(s3.f("z"), "zz");
+						}
+					}
+				}
+				//expect that we opened one more connection for the additional RMIVariables
+				assertEquals(RMITestUtil.getConnectionStreamCount(connection), 1);
+			}
+			server.closeWait();
 		}
 	}
 

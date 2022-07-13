@@ -15,6 +15,8 @@
  */
 package testing.saker.build.tests.rmi;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 
@@ -26,6 +28,7 @@ import saker.util.io.IOUtils;
 import saker.util.io.ResourceCloser;
 import saker.util.thread.ExceptionThread;
 import saker.util.thread.ThreadUtils;
+import saker.util.thread.ThreadUtils.ThreadWorkPool;
 import testing.saker.SakerTestCase;
 
 public abstract class BaseRMITestCase extends SakerTestCase {
@@ -75,12 +78,20 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 		for (int i = minstreams; i <= maxstreams; i++) {
 			System.out.println("RMI test with max stream count: " + i);
 
+			ThreadExecutor threadexecutor;
+			ThreadWorkPool workpool;
 			Executor[] executors = settings.executors;
 			if (executors == null) {
 				//test with multiple different executors by default
 				//    null for the built-in task scheduling
 				//    simple new thread / task executor
-				executors = new Executor[] { null, new ThreadExecutor(), };
+				//	  dynamic work pool
+				threadexecutor = new ThreadExecutor();
+				workpool = ThreadUtils.newDynamicWorkPool(getClass().getName() + "-");
+				executors = new Executor[] { null, threadexecutor, run -> workpool.offer(run::run), };
+			} else {
+				threadexecutor = null;
+				workpool = null;
 			}
 
 			for (Executor executor : executors) {
@@ -102,6 +113,14 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 				}
 				System.out.println();
 			}
+			//join the threads so we don't leak them to the caller
+			//the joining should be successful, as all threads should be done
+			if (threadexecutor != null) {
+				ThreadUtils.joinThreads(threadexecutor.getThreads());
+			}
+			if (workpool != null) {
+				workpool.closeInterruptible();
+			}
 
 		}
 	}
@@ -114,10 +133,19 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 		return new BaseRMITestSettings();
 	}
 
-	private static final class ThreadExecutor implements Executor {
+	public static final class ThreadExecutor implements Executor {
+		private List<Thread> threads = new ArrayList<>();
+
 		@Override
 		public void execute(Runnable command) {
-			new Thread(command).start();
+			Thread thread = new Thread(command);
+			thread.setDaemon(true);
+			thread.start();
+			threads.add(thread);
+		}
+
+		public List<Thread> getThreads() {
+			return threads;
 		}
 	}
 

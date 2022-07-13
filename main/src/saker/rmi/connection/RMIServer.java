@@ -39,6 +39,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
@@ -48,6 +49,7 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
 import saker.rmi.connection.RMIConnection.PendingStreamTracker;
+import saker.util.ImmutableUtils;
 import saker.util.ObjectUtils;
 import saker.util.io.IOUtils;
 import saker.util.io.SerialUtils;
@@ -106,7 +108,13 @@ public class RMIServer implements AutoCloseable {
 	private final ServerSocket acceptorSocket;
 	private final int port;
 
+	/**
+	 * Only add to this collection in a synchronized block on <code>this</code> while also checking {@link #state}.
+	 */
 	private final Collection<Socket> unhandledSockets = ConcurrentHashMap.newKeySet();
+	/**
+	 * Only add to this collection in a synchronized block on <code>this</code> while also checking {@link #state}.
+	 */
 	private final ConcurrentSkipListMap<UUID, WeakReference<RMIConnection>> connections = new ConcurrentSkipListMap<>();
 
 	private volatile int state = STATE_UNSTARTED;
@@ -165,6 +173,8 @@ public class RMIServer implements AutoCloseable {
 	 * Returns the address of the endpoint this server socket is bound to.
 	 * 
 	 * @return The socket address.
+	 * @throws IllegalStateException
+	 *             If the RMI server was already started previously.
 	 * @see ServerSocket#getLocalSocketAddress()
 	 */
 	public final SocketAddress getLocalSocketAddress() {
@@ -176,8 +186,8 @@ public class RMIServer implements AutoCloseable {
 	 * <p>
 	 * This method is the same as calling {@link #start(ThreadGroup)} with <code>null</code> thread group.
 	 */
-	public final void start() {
-		start(null);
+	public final void start() throws IllegalStateException {
+		start((ThreadGroup) null);
 	}
 
 	/**
@@ -192,22 +202,49 @@ public class RMIServer implements AutoCloseable {
 	 * 
 	 * @param threadpoolthreadgroup
 	 *            The thread group for the thread pool or <code>null</code> to use the current one.
+	 * @throws IllegalStateException
+	 *             If the RMI server was already started previously.
 	 */
-	public final void start(ThreadGroup threadpoolthreadgroup) {
+	public final void start(ThreadGroup threadpoolthreadgroup) throws IllegalStateException {
 		ThreadWorkPool tpool = startServerOperationStates(threadpoolthreadgroup);
 		tpool.offer(() -> {
 			Thread.currentThread().setContextClassLoader(null);
-			acceptConnectionsImpl(tpool);
+			acceptConnectionsImpl(runnable -> tpool.offer(runnable::run));
 		});
+	}
+
+	/**
+	 * Starts the accepting of connections on a given executor.
+	 * <p>
+	 * This method will start listening for connections using the argument executor. The handling of new connections
+	 * will also use the given executor.
+	 * 
+	 * @param executor
+	 *            The executor to accepts connections and handle new connections on.
+	 * @throws NullPointerException
+	 *             If the executor is <code>null</code>.
+	 * @throws IllegalStateException
+	 *             If the RMI server was already started previously.
+	 * @since saker.rmi 0.8.3
+	 */
+	public final void start(Executor executor) throws NullPointerException, IllegalStateException {
+		Objects.requireNonNull(executor, "executor");
+		if (!AIFU_state.compareAndSet(this, STATE_UNSTARTED, STATE_RUNNING)) {
+			throw new IllegalStateException("Server was already started or closed.");
+		}
+		executor.execute(() -> acceptConnectionsImpl(executor));
 	}
 
 	/**
 	 * Starts the accepting of connections on this thread.
 	 * <p>
 	 * This method is the same as calling {@link #acceptConnections(ThreadGroup)} with <code>null</code> thread group.
+	 * 
+	 * @throws IllegalStateException
+	 *             If the RMI server was already started previously.
 	 */
-	public final void acceptConnections() {
-		acceptConnections(null);
+	public final void acceptConnections() throws IllegalStateException {
+		acceptConnections((ThreadGroup) null);
 	}
 
 	/**
@@ -222,10 +259,36 @@ public class RMIServer implements AutoCloseable {
 	 * 
 	 * @param threadpoolthreadgroup
 	 *            The thread group for the thread pool or <code>null</code> to use the current one.
+	 * @throws IllegalStateException
+	 *             If the RMI server was already started previously.
 	 */
-	public final void acceptConnections(ThreadGroup threadpoolthreadgroup) {
+	public final void acceptConnections(ThreadGroup threadpoolthreadgroup) throws IllegalStateException {
 		ThreadWorkPool tpool = startServerOperationStates(threadpoolthreadgroup);
-		acceptConnectionsImpl(tpool);
+		acceptConnectionsImpl(runnable -> tpool.offer(runnable::run));
+	}
+
+	/**
+	 * Starts the accepting of connections on this thread.
+	 * <p>
+	 * This method will execute the listening for connections on this thread, and therefore closing the RMI server will
+	 * require external intervention.
+	 * <p>
+	 * The newly accepted connections will be handled on the argument {@link Executor}.
+	 * 
+	 * @param executor
+	 *            The executor to handle new connections on.
+	 * @throws NullPointerException
+	 *             If the executor is <code>null</code>.
+	 * @throws IllegalStateException
+	 *             If the RMI server was already started previously.
+	 * @since saker.rmi 0.8.3
+	 */
+	public final void acceptConnections(Executor executor) throws NullPointerException, IllegalStateException {
+		Objects.requireNonNull(executor, "executor");
+		if (!AIFU_state.compareAndSet(this, STATE_UNSTARTED, STATE_RUNNING)) {
+			throw new IllegalStateException("Server was already started or closed.");
+		}
+		acceptConnectionsImpl(executor);
 	}
 
 	/**
@@ -242,7 +305,7 @@ public class RMIServer implements AutoCloseable {
 	 *            The connection read timeout in milliseconds.
 	 * @since saker.rmi 0.8.2
 	 */
-	public void setConnectionTimeout(int connectionTimeout) {
+	public final void setConnectionTimeout(int connectionTimeout) {
 		if (connectionTimeout < 0) {
 			this.connectionTimeout = DEFAULT_CONNECTION_TIMEOUT_MS;
 		} else {
@@ -262,12 +325,14 @@ public class RMIServer implements AutoCloseable {
 	 */
 	public final void closeWait() throws IOException, InterruptedException {
 		IOException exc = null;
+		state = STATE_CLOSED;
+		exc = IOUtils.closeExc(exc, acceptorSocket);
+		Collection<Socket> socketstoclose;
 		synchronized (this) {
-			state = STATE_CLOSED;
-			exc = IOUtils.closeExc(exc, acceptorSocket);
-			exc = IOUtils.closeExc(exc, unhandledSockets);
+			socketstoclose = ImmutableUtils.makeImmutableList(unhandledSockets);
 			unhandledSockets.clear();
 		}
+		exc = IOUtils.closeExc(exc, socketstoclose);
 
 		ThreadWorkPool tpool = serverThreadWorkPool;
 		if (tpool != null) {
@@ -278,8 +343,14 @@ public class RMIServer implements AutoCloseable {
 		} catch (IOException e) {
 			exc = IOUtils.addExc(exc, e);
 		}
-		if (tpool != null) {
+		try {
 			removeCloseWaitAllConnections();
+		} catch (IOException | InterruptedException e) {
+			//add previous exception as suppressed
+			IOUtils.addExc(e, exc);
+			throw e;
+		}
+		if (tpool != null) {
 			tpool.closeInterruptible();
 		}
 		IOUtils.throwExc(exc);
@@ -300,12 +371,14 @@ public class RMIServer implements AutoCloseable {
 	@Override
 	public final void close() throws IOException {
 		IOException exc = null;
+		state = STATE_CLOSED;
+		exc = IOUtils.closeExc(exc, acceptorSocket);
+		Collection<Socket> socketstoclose;
 		synchronized (this) {
-			state = STATE_CLOSED;
-			exc = IOUtils.closeExc(exc, acceptorSocket);
-			exc = IOUtils.closeExc(exc, unhandledSockets);
+			socketstoclose = ImmutableUtils.makeImmutableList(unhandledSockets);
 			unhandledSockets.clear();
 		}
+		exc = IOUtils.closeExc(exc, socketstoclose);
 		try {
 			closeImpl();
 		} catch (IOException e) {
@@ -314,8 +387,15 @@ public class RMIServer implements AutoCloseable {
 
 		ThreadWorkPool tpool = serverThreadWorkPool;
 		if (tpool != null) {
-			removeCloseAllConnections();
 			tpool.exit();
+		}
+		//don't remove the connections from the collection, as if somebody calls closeWait after this, then the connections need to be waited for
+		for (WeakReference<RMIConnection> ref : connections.values()) {
+			RMIConnection conn = ObjectUtils.getReference(ref);
+			if (conn == null) {
+				continue;
+			}
+			exc = IOUtils.closeExc(exc, conn);
 		}
 		IOUtils.throwExc(exc);
 	}
@@ -843,18 +923,25 @@ public class RMIServer implements AutoCloseable {
 		throw exc;
 	}
 
-	private void acceptConnectionsImpl(ThreadWorkPool tpool) {
+	private void acceptConnectionsImpl(Executor executor) {
 		try (ServerSocket accsocket = this.acceptorSocket) {
 			while (state == STATE_RUNNING) {
 				Socket accepted = accsocket.accept();
+
+				//use flag so we don't close the socket inside the synchronized block
+				boolean abort = false;
 				synchronized (this) {
 					if (state != STATE_RUNNING) {
-						IOUtils.close(accepted);
-						break;
+						abort = true;
+					} else {
+						unhandledSockets.add(accepted);
 					}
-					unhandledSockets.add(accepted);
-					tpool.offer(() -> handleAcceptedConnection(accepted));
 				}
+				if (abort) {
+					IOUtils.close(accepted);
+					break;
+				}
+				executor.execute(() -> handleAcceptedConnection(accepted));
 			}
 		} catch (IOException e) {
 			//we accept an IOException if the server has been closed
@@ -925,31 +1012,49 @@ public class RMIServer implements AutoCloseable {
 					RMIConnection connection = new RMIConnection(options, useversion);
 					try {
 						setupConnection(accepted, connection);
-					} catch (IOException | RuntimeException e) {
-						dataos.writeShort(COMMAND_ERROR_SETUP_FAILED);
-						dataos.flush();
-						IOUtils.addExc(e, IOUtils.closeExc(connection));
+					} catch (Exception e) {
+						try {
+							dataos.writeShort(COMMAND_ERROR_SETUP_FAILED);
+							dataos.flush();
+						} catch (Exception e2) {
+							e.addSuppressed(e2);
+						}
+						try {
+							connection.close();
+						} catch (Exception e2) {
+							e.addSuppressed(e2);
+						}
 						throw e;
 					}
 
 					RMIStream stream = new RMIStream(connection, socketis, socketos);
 
 					connref = new WeakReference<>(connection);
-					connections.put(connuuidtoremove, connref);
+
+					boolean abort = false;
+					synchronized (this) {
+						if (state != STATE_RUNNING) {
+							abort = true;
+						} else {
+							connections.put(connuuidtoremove, connref);
+						}
+					}
+					if (abort) {
+						IOUtils.close(stream, connection);
+						return;
+					}
 
 					dataos.writeShort(COMMAND_NEW_CONNECTION_RESPONSE);
 					dataos.writeLong(connuuidtoremove.getMostSignificantBits());
 					dataos.writeLong(connuuidtoremove.getLeastSignificantBits());
 					dataos.flush();
 					accepted.setSoTimeout(0);
-					synchronized (this) {
-						if (state != STATE_RUNNING) {
-							IOUtils.close(stream, connection);
-							return;
-						}
-						socketclose = null;
-						connuuidtoremove = null;
+					if (state != STATE_RUNNING) {
+						IOUtils.close(stream, connection);
+						return;
 					}
+					socketclose = null;
+					connuuidtoremove = null;
 
 					connection.finishNewConnectionSetup(stream);
 					break;
@@ -1070,7 +1175,7 @@ public class RMIServer implements AutoCloseable {
 	}
 
 	private ThreadWorkPool startServerOperationStates(ThreadGroup taskpoolthreadgroup) {
-		synchronized (this) {
+		synchronized (this) { // this is in a synchronized block due to possible concurrent closing in close()
 			if (!AIFU_state.compareAndSet(this, STATE_UNSTARTED, STATE_RUNNING)) {
 				throw new IllegalStateException("Server was already started or closed.");
 			}
