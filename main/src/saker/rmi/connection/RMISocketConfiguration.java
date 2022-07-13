@@ -26,7 +26,7 @@ import javax.net.SocketFactory;
  * 
  * @since saker.rmi 0.8.2
  */
-public class RMISocketConfiguration {
+public final class RMISocketConfiguration {
 	private SocketFactory socketFactory;
 	private int connectionTimeout = -1;
 	private boolean connectionInterruptible;
