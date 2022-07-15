@@ -1,12 +1,12 @@
 package testing.saker.build.tests.rmi;
 
-import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.nio.file.Paths;
 import java.util.Collection;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
@@ -52,19 +52,25 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 
 		@Override
 		public Stub createOne(String val) {
-			return new Impl(val);
+			return new CreatedOne(val);
 		}
 
 		@Override
 		public String toString() {
-			StringBuilder builder = new StringBuilder();
-			builder.append("Impl[");
+			StringBuilder builder = new StringBuilder(getClass().getSimpleName());
+			builder.append("[");
 			builder.append("val=");
 			builder.append(val);
 			builder.append("]");
 			return builder.toString();
 		}
 
+	}
+
+	public static class CreatedOne extends Impl {
+		public CreatedOne(String val) {
+			super(val);
+		}
 	}
 
 	@Override
@@ -90,6 +96,7 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 
 						Stub pt = theone.passThrough(impl);
 						assertIdentityEquals(pt, impl);
+						System.out.println("GCActionStressTest.runVariablesTestImpl() " + impl);
 						impl = null;
 						System.gc();
 
@@ -164,14 +171,19 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 		int slocal = RMITestUtil.getLiveLocalObjectCount(serverVariables);
 		int cremote = RMITestUtil.getLiveRemoteObjectCount(clientVariables);
 		int sremote = RMITestUtil.getLiveRemoteObjectCount(serverVariables);
-		assertEquals(clocal, 0,
-				"client local objects still alive: " + clocal + "/" + slocal + " - " + cremote + "/" + sremote);
-		assertEquals(slocal, 0,
-				"server local objects still alive: " + clocal + "/" + slocal + " - " + cremote + "/" + sremote);
-		assertEquals(cremote, 0,
-				"client remote objects still alive: " + clocal + "/" + slocal + " - " + cremote + "/" + sremote);
-		assertEquals(sremote, 0,
-				"server remote objects still alive: " + clocal + "/" + slocal + " - " + cremote + "/" + sremote);
+		try {
+			assertEquals(clocal, 0,
+					"client local objects still alive: " + clocal + "/" + slocal + " - " + cremote + "/" + sremote);
+			assertEquals(slocal, 0,
+					"server local objects still alive: " + clocal + "/" + slocal + " - " + cremote + "/" + sremote);
+			assertEquals(cremote, 0,
+					"client remote objects still alive: " + clocal + "/" + slocal + " - " + cremote + "/" + sremote);
+			assertEquals(sremote, 0,
+					"server remote objects still alive: " + clocal + "/" + slocal + " - " + cremote + "/" + sremote);
+		} catch (AssertionError e) {
+			dumpHeap();
+			throw e;
+		}
 	}
 
 	private static void dumpHeap() {
@@ -181,7 +193,8 @@ public class GCActionStressTest extends BaseVariablesRMITestCase {
 				HotSpotDiagnosticMXBean mxBean = ManagementFactory.newPlatformMXBeanProxy(
 						ManagementFactory.getPlatformMBeanServer(), "com.sun.management:type=HotSpotDiagnostic",
 						HotSpotDiagnosticMXBean.class);
-				String dumppath = Paths.get(tempdir).resolve("GCActionStressTest_heap.hprof").toAbsolutePath()
+				String dumppath = Paths.get(tempdir)
+						.resolve("GCActionStressTest_heap_" + UUID.randomUUID().toString() + ".hprof").toAbsolutePath()
 						.normalize().toString();
 				System.out.println("Dumping heap to: " + dumppath);
 				mxBean.dumpHeap(dumppath, true);

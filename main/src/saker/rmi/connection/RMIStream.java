@@ -384,27 +384,18 @@ final class RMIStream implements Closeable {
 			if (action == null) {
 				return true;
 			}
-			if (isAllPendingRequestsDone(action)) {
-				//all pending requests from the previous are done, clear the field,
-				//so the reference is not kept, and further checks are faster
+			if (action.releaseData == null) {
+				//the release data from the previous is cleared, so it must not have any pending requests
 				this.prev = null;
 				return true;
 			}
 			return false;
 		}
 
-		private static boolean isAllPendingRequestsDone(ReferencesReleasedAction action) {
-			for (; action != null; action = action.prev) {
-				if (action.pendingRequests != 0) {
-					return false;
-				}
-			}
-			return true;
-		}
-
 		//the next action is a newly constructed clean instance, that has its prev pointer set to this
 		//we don't have to do notifications for the next action in case we have no more pending requests,
 		//as the next action is a clean one
+		//increasePendingRequestCount() is no longer called on this instance after this referencesReleased call
 		public void referencesReleased(RMIVariables vars, int localid, int count, ReferencesReleasedAction nextaction) {
 			//always set the next pointer so the chain doesn't break
 			if (!ARFU_next.compareAndSet(this, null, nextaction)) {
@@ -431,14 +422,18 @@ final class RMIStream implements Closeable {
 			nextaction.prev = null;
 
 			//the pending requests are done, and it won't increase, as this function is called on a single thread that manages its increase
-			ReleaseData prev = ARFU_releaseData.getAndSet(this, null);
-			if (prev != null) {
+			ReleaseData prevdata = ARFU_releaseData.getAndSet(this, null);
+			if (prevdata != null) {
 				//can be called on the parameter variables, as they must equal to the values in the received ReleaseData
 				vars.referencesReleased(localid, count);
 			}
 			//else okay, somebody else is doing it now
 		}
 
+		// this is only called if a given command prevents/delays garbage collection
+		// this is only called on the socket reading thread
+		// this is only called on the last action in the chain
+		//   if a new action is added to the chain, this is no longer called
 		public void increasePendingRequestCount() {
 			AIFU_pendingRequests.incrementAndGet(this);
 		}
@@ -450,10 +445,14 @@ final class RMIStream implements Closeable {
 				//and all previous action requests are done
 
 				ReferencesReleasedAction action = this.prev;
-				if (action != null && !action.isAllPendingRequestsDone()) {
-					//can't do the GC yet, some request are still running
-					//we'll get a no more request notification when the previous one doesn't have any more pending requests
-					return;
+				if (action != null) {
+					if (action.releaseData != null) {
+						//the previous action still hasn't done the GC, we can't do it either
+						//we'll get a no more request notification when the previous one doesn't have any more pending requests
+						return;
+					}
+					//clear the prev field, as all previous pending requests are done, and we don't need it anymore
+					this.prev = null;
 				}
 				//no more pending requests in the previous actions (if there's any previous action)
 				//we can proceed with the reference releasing
@@ -466,16 +465,15 @@ final class RMIStream implements Closeable {
 						//the action has no more pending requests, proceed and notify up the chain
 						next = next.next;
 					} else {
-						//the action still has some pending request, break the notificaiton chain
+						//the action still has some pending request, break the notification chain
 						break;
 					}
 				}
-
 			}
 		}
 
 		private boolean noMoreRequestNotificationFromPrevious() {
-			//clear the prev field, as all previous pending requests are done
+			//clear the prev field, as all previous pending requests are done, and we don't need it anymore
 			this.prev = null;
 			if (pendingRequests != 0) {
 				//we still have some requests going on
