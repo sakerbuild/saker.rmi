@@ -99,10 +99,12 @@ public class RMIClassLookupTest extends BaseVariablesRMITestCase {
 			assertEquals(Impl2.callCount, 0);
 		}
 
-		clientRegistry.register("thiscl",
-				new SingleClassLoaderResolver("thiscl", RMIClassLookupTest.class.getClassLoader()));
-		serverRegistry.register("thiscl",
-				new SingleClassLoaderResolver("thiscl", RMIClassLookupTest.class.getClassLoader()));
+		SingleClassLoaderResolver clientthiscl = new SingleClassLoaderResolver("thiscl",
+				RMIClassLookupTest.class.getClassLoader());
+		SingleClassLoaderResolver serverthiscl = new SingleClassLoaderResolver("thiscl",
+				RMIClassLookupTest.class.getClassLoader());
+		clientRegistry.register("thiscl", clientthiscl);
+		serverRegistry.register("thiscl", serverthiscl);
 
 		{
 			Stub s = (Stub) clientVariables.newRemoteInstance(Impl.class);
