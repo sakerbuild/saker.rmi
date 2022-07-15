@@ -542,16 +542,16 @@ final class RMIStream implements Closeable {
 								ReferencesReleasedAction nextaction = new ReferencesReleasedAction(currentaction);
 								this.gcAction = nextaction;
 
-								connection.offerStreamTask(this);
-
 								RMIVariables vars = readVariablesImpl(in);
 								if (vars == null) {
+									connection.offerStreamTask(this);
 									break command_input_try;
 								}
 								int localid = in.readInt();
 								int count = in.readInt();
 
 								currentaction.referencesReleased(vars, localid, count, nextaction);
+								connection.offerStreamTask(this);
 								break command_input_try;
 							}
 							default: {
