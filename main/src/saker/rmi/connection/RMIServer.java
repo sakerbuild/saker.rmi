@@ -208,7 +208,7 @@ public class RMIServer implements AutoCloseable {
 	public final void start(ThreadGroup threadpoolthreadgroup) throws IllegalStateException {
 		ThreadWorkPool tpool = startServerOperationStates(threadpoolthreadgroup);
 		tpool.offer(() -> {
-			Thread.currentThread().setContextClassLoader(null);
+			RMIConnection.clearContextClassLoaderOfCurrentThread();
 			acceptConnectionsImpl(runnable -> tpool.offer(runnable::run));
 		});
 	}
@@ -959,7 +959,7 @@ public class RMIServer implements AutoCloseable {
 	}
 
 	private void handleAcceptedConnection(final Socket accepted) {
-		Thread.currentThread().setContextClassLoader(null);
+		RMIConnection.clearContextClassLoaderOfCurrentThread();
 
 		Socket socketclose = accepted;
 		WeakReference<RMIConnection> connref = null;

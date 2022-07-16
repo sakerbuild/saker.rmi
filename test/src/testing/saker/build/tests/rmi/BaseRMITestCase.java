@@ -15,14 +15,18 @@
  */
 package testing.saker.build.tests.rmi;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadFactory;
 
 import saker.rmi.connection.RMIConnection;
 import saker.rmi.connection.RMIOptions;
 import saker.rmi.connection.RMITestUtil;
+import saker.util.ReflectUtils;
 import saker.util.function.ThrowingRunnable;
 import saker.util.io.IOUtils;
 import saker.util.io.ResourceCloser;
@@ -81,6 +85,7 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 			ThreadExecutor threadexecutor;
 			ThreadWorkPool workpool;
 			Executor[] executors = settings.executors;
+			ThreadExecutor vhtreadexecutor = null;
 			if (executors == null) {
 				//test with multiple different executors by default
 				//    null for the built-in task scheduling
@@ -88,7 +93,18 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 				//	  dynamic work pool
 				threadexecutor = new ThreadExecutor();
 				workpool = ThreadUtils.newDynamicWorkPool(getClass().getName() + "-");
-				executors = new Executor[] { null, threadexecutor, run -> workpool.offer(run::run), };
+				List<Executor> executorlist = new ArrayList<>();
+				executorlist.add(null);
+				executorlist.add(threadexecutor);
+				executorlist.add(run -> workpool.offer(run::run));
+
+				ThreadFactory vthreadfactory = createVirtualThreadFactory();
+				if (vthreadfactory != null) {
+					vhtreadexecutor = new ThreadExecutor(vthreadfactory);
+					executorlist.add(vhtreadexecutor);
+				}
+
+				executors = executorlist.toArray(new Executor[executorlist.size()]);
 			} else {
 				threadexecutor = null;
 				workpool = null;
@@ -118,11 +134,50 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 			if (threadexecutor != null) {
 				ThreadUtils.joinThreads(threadexecutor.getThreads());
 			}
+			if (vhtreadexecutor != null) {
+				ThreadUtils.joinThreads(vhtreadexecutor.getThreads());
+			}
 			if (workpool != null) {
 				workpool.closeInterruptible();
 			}
 
 		}
+	}
+
+	public static ThreadFactory createVirtualThreadFactory() throws Exception {
+		try {
+			Method ofvirtual = Thread.class.getDeclaredMethod("ofVirtual");
+			Object builder = ofvirtual.invoke(null);
+			Class<?> builderitf = ReflectUtils.findInterfaceWithNameInHierarchy(builder.getClass(),
+					"java.lang.Thread$Builder");
+			builderitf.getMethod("allowSetThreadLocals", boolean.class).invoke(builder, false);
+			return (ThreadFactory) builderitf.getMethod("factory").invoke(builder);
+		} catch (ReflectiveOperationException e) {
+			if (queryJreMajorVersion() >= 19) {
+				//these methods/classes are expected to be present on JRE 19
+				throw e;
+			}
+			return null;
+		}
+	}
+
+	/**
+	 * Gets the current Java runtime major version, or 8 if the {@link Runtime.Version} class is not present.
+	 * 
+	 * @return The major version.
+	 */
+	//copied from saker.build.util.java.JavaTools.queryJreMajorVersion()
+	private static int queryJreMajorVersion() {
+		try {
+			Class<?> versionclass = Class.forName("java.lang.Runtime$Version", false, null);
+			Method versionmethod = Runtime.class.getMethod("version");
+			Object runtimeversion = versionmethod.invoke(null);
+			return (int) versionclass.getMethod("major").invoke(runtimeversion);
+		} catch (ClassNotFoundException | NoSuchMethodException | SecurityException | IllegalAccessException
+				| IllegalArgumentException | InvocationTargetException ignored) {
+		}
+		//if some methods or classes introduced in jre 9 was not found, return 8
+		return 8;
 	}
 
 	protected RMIConnection[] createConnections(RMIOptions baseoptions) throws Exception {
@@ -134,12 +189,27 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 	}
 
 	public static final class ThreadExecutor implements Executor {
-		private List<Thread> threads = new ArrayList<>();
+		private final ThreadFactory threadFactory;
+		private final List<Thread> threads = new ArrayList<>();
+
+		public ThreadExecutor(ThreadFactory threadFactory) {
+			this.threadFactory = threadFactory;
+		}
+
+		public ThreadExecutor() {
+			this(new ThreadFactory() {
+				@Override
+				public Thread newThread(Runnable r) {
+					Thread thread = new Thread(r);
+					thread.setDaemon(true);
+					return thread;
+				}
+			});
+		}
 
 		@Override
 		public void execute(Runnable command) {
-			Thread thread = new Thread(command);
-			thread.setDaemon(true);
+			Thread thread = threadFactory.newThread(command);
 			thread.start();
 			threads.add(thread);
 		}

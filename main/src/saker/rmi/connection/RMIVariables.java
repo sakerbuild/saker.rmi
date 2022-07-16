@@ -1428,7 +1428,7 @@ public class RMIVariables implements AutoCloseable {
 	}
 
 	private static void runGcThread(ReferenceQueue<Object> refqueue, WeakReference<RMIVariables> varsref) {
-		Thread.currentThread().setContextClassLoader(null);
+		RMIConnection.clearContextClassLoaderOfCurrentThread();
 		try {
 			while (true) {
 				Reference<? extends Object> ref = refqueue.remove();

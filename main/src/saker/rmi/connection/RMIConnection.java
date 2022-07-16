@@ -18,8 +18,6 @@ package saker.rmi.connection;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.lang.Thread.State;
-import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -32,7 +30,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.Executor;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
@@ -864,8 +861,8 @@ public final class RMIConnection implements AutoCloseable {
 	void offerStreamTask(Runnable task) {
 		AIFU_offeredStreamTaskCount.incrementAndGet(this);
 		this.taskExecutor.execute(() -> {
-			Thread.currentThread().setContextClassLoader(null);
 			try {
+				clearContextClassLoaderOfCurrentThread();
 				task.run();
 			} finally {
 				if (AIFU_offeredStreamTaskCount.decrementAndGet(this) == 0) {
@@ -873,6 +870,15 @@ public final class RMIConnection implements AutoCloseable {
 				}
 			}
 		});
+	}
+
+	public static void clearContextClassLoaderOfCurrentThread() {
+		try {
+			Thread.currentThread().setContextClassLoader(null);
+		} catch (UnsupportedOperationException e) {
+			//setting the context class loader may be unsupported on virtual threads
+			//ignore
+		}
 	}
 
 	void offerVariablesTask(Runnable task) {
