@@ -96,7 +96,7 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 				List<Executor> executorlist = new ArrayList<>();
 				executorlist.add(null);
 				executorlist.add(threadexecutor);
-				executorlist.add(run -> workpool.offer(run::run));
+				executorlist.add(new ThreadWorkPoolExecutor(workpool));
 
 				ThreadFactory vthreadfactory = createVirtualThreadFactory();
 				if (vthreadfactory != null) {
@@ -188,6 +188,24 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 		return new BaseRMITestSettings();
 	}
 
+	private static final class ThreadWorkPoolExecutor implements Executor {
+		private final ThreadWorkPool workpool;
+
+		private ThreadWorkPoolExecutor(ThreadWorkPool workpool) {
+			this.workpool = workpool;
+		}
+
+		@Override
+		public void execute(Runnable run) {
+			workpool.offer(run::run);
+		}
+
+		@Override
+		public String toString() {
+			return "ThreadWorkPoolExecutor[]";
+		}
+	}
+
 	public static final class ThreadExecutor implements Executor {
 		private final ThreadFactory threadFactory;
 		private final List<Thread> threads = new ArrayList<>();
@@ -204,6 +222,11 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 					thread.setDaemon(true);
 					return thread;
 				}
+
+				@Override
+				public String toString() {
+					return "SimpleThreadFactory[]";
+				}
 			});
 		}
 
@@ -216,6 +239,15 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 
 		public List<Thread> getThreads() {
 			return threads;
+		}
+
+		@Override
+		public String toString() {
+			StringBuilder builder = new StringBuilder();
+			builder.append("ThreadExecutor[");
+			builder.append(threadFactory);
+			builder.append("]");
+			return builder.toString();
 		}
 	}
 

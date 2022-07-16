@@ -54,6 +54,7 @@ upload() {
 }
 test(
 	in jdk = saker.java.sdk(),
+	in additionaljvmparameters = [],
 ){
 	# TODO remove lib/saker_testutils.jar dependency
 	$compile = include(compile, Path: main/main.build, testing: true)
@@ -93,7 +94,7 @@ test(
 		ProcessJVMParameters: [
 			--enable-preview 
 			#"-agentlib:jdwp=transport=dt_socket,address=localhost:5432,server=y,suspend=y,quiet=y" 
-		],
+		] + $additionaljvmparameters,
 		WorkingDirectory: test/resources/,
 		MaxJVMCount: 1,
 		FailFast: true,
@@ -160,5 +161,9 @@ testjava18(){
 testjava19(){
 	test(
 		jdk: saker.java.sdk(19),
+		additionaljvmparameters: [
+			--add-modules 
+			jdk.incubator.concurrent
+		]
 	)
 }

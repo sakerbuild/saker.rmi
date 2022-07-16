@@ -177,8 +177,6 @@ public final class RMIConnection implements AutoCloseable {
 	private Collection<CloseListener> closeListeners = ObjectUtils.newIdentityHashSet();
 
 	private final RequestHandler requestHandler = new RequestHandler();
-	private final ThreadLocal<int[]> currentThreadPreviousMethodCallRequestId = ThreadLocal
-			.withInitial(() -> new int[1]);
 
 	@SuppressWarnings("unused") // used through its atomic field updater
 	private volatile int offeredStreamTaskCount;
@@ -795,10 +793,6 @@ public final class RMIConnection implements AutoCloseable {
 
 	RequestHandler getRequestHandler() {
 		return requestHandler;
-	}
-
-	ThreadLocal<int[]> getCurrentThreadPreviousMethodCallRequestIdThreadLocal() {
-		return currentThreadPreviousMethodCallRequestId;
 	}
 
 	void finishNewConnectionSetup(RMIStream stream) throws RMIRuntimeException, IOException {
