@@ -44,7 +44,17 @@ public class CallDispatchTest extends BaseVariablesRMITestCase {
 	protected void runVariablesTestImpl() throws Exception {
 		Stub s = (Stub) clientVariables.newRemoteInstance(Impl.class);
 		s.callIt(() -> {
-			s.assertIsOnCallItThread();
+			try {
+				s.assertIsOnCallItThread();
+
+				//do 1 more level of dispatching
+				Stub s2 = (Stub) clientVariables.newRemoteInstance(Impl.class);
+				s2.callIt(() -> {
+					s2.assertIsOnCallItThread();
+				});
+			} catch (Exception e) {
+				throw fail(e);
+			}
 		});
 	}
 
