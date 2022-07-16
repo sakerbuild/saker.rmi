@@ -496,15 +496,21 @@ final class RMIStream implements Closeable {
 		// this field could be kept on a per-RMIVariables basis, but this is fine for now
 		protected ReferencesReleasedAction gcAction = new ReferencesReleasedAction();
 
-		@Override
-		public void run() {
-			Throwable streamerrorexc = null;
-			reader_try:
+		/**
+		 * @return <code>false</code> if the stream handling should exit, <code>true</code> if a new read task has been
+		 *             posted, and is still running.
+		 * @throws IOException
+		 */
+		private boolean readHandleSingleBlock() throws IOException {
+			StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> fullblock = connection.getCachedByteBuffer();
 			try {
-				blockIn.nextBlock();
-				StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> fullblock = connection.getCachedByteBuffer();
-				try {
-					DataOutputUnsyncByteArrayOutputStream fullblockbuf = fullblock.get();
+				DataOutputUnsyncByteArrayOutputStream fullblockbuf = fullblock.get();
+
+				//enclose the reading in a loop, so if we handle a command in a way that doesn't post the next block reading
+				//to a new task, but rather continue on this thread, then we can restart
+				block_read_loop:
+				for (;; fullblockbuf.reset()) {
+					blockIn.nextBlock();
 					long readcount;
 					try {
 						readcount = fullblockbuf.readFrom(blockIn);
@@ -512,10 +518,9 @@ final class RMIStream implements Closeable {
 						if (streamCloseWritten != 0) {
 							//the stream is closing. IOException can be ignored
 							//go and close the socket
-							break reader_try;
-						} else {
-							throw e;
+							return false;
 						}
+						throw e;
 					}
 					if (readcount == 0) {
 						//no more data from the socket
@@ -524,10 +529,9 @@ final class RMIStream implements Closeable {
 						if (streamCloseWritten == 0) {
 							throw new EOFException("No more data from stream.");
 						}
-						break reader_try;
+						return false;
 					}
 
-					command_input_try:
 					try (DataInputUnsyncByteArrayInputStream in = new DataInputUnsyncByteArrayInputStream(
 							fullblockbuf.toByteArrayRegion())) {
 						short command = in.readShort();
@@ -535,7 +539,7 @@ final class RMIStream implements Closeable {
 							case COMMAND_STREAM_CLOSED: {
 								connection.clientClose();
 								//go and close the socket
-								break reader_try;
+								return false;
 							}
 							case COMMAND_REFERENCES_RELEASED: {
 								ReferencesReleasedAction currentaction = this.gcAction;
@@ -544,15 +548,13 @@ final class RMIStream implements Closeable {
 
 								RMIVariables vars = readVariablesImpl(in);
 								if (vars == null) {
-									connection.offerStreamTask(this);
-									break command_input_try;
+									continue block_read_loop;
 								}
 								int localid = in.readInt();
 								int count = in.readInt();
 
 								currentaction.referencesReleased(vars, localid, count, nextaction);
-								connection.offerStreamTask(this);
-								break command_input_try;
+								continue block_read_loop;
 							}
 							default: {
 								CommandHandler commandhandler = getCommandHandler(command);
@@ -573,21 +575,28 @@ final class RMIStream implements Closeable {
 								break;
 							}
 						}
-
-						//don't pollute output with warnings or other things
-//							if (in.available() > 0) {
-//								System.err.println("Warning: RMI Stream: Failed to read block fully. (Command: " + command
-//										+ ", remaining: " + in.available() + ")");
-//							}
 					}
 					// no exceptions should escape the command handling. If any escapes, that is an implementation error in the
 					// RMI library and shutdown is expected
-				} finally {
-					connection.releaseCachedByteBuffer(fullblock);
+
+					// exit the loop by default
+					break;
 				}
-				//handling the input block completed successfully,
-				//return and dont close the sockets
-				return;
+			} finally {
+				connection.releaseCachedByteBuffer(fullblock);
+			}
+			return true;
+		}
+
+		@Override
+		public void run() {
+			Throwable streamerrorexc = null;
+			try {
+				if (readHandleSingleBlock()) {
+					//handling the input block completed successfully,
+					//return and dont close the sockets
+					return;
+				} // else the stream is exiting
 			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
 					| ServiceConfigurationError e) {
 				streamerrorexc = e;
