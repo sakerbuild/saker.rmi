@@ -5,6 +5,7 @@ import java.net.InetAddress;
 import java.util.Map;
 
 import saker.rmi.connection.RMIServer;
+import saker.util.io.IOUtils;
 import saker.util.thread.ExceptionThread;
 import testing.saker.SakerTest;
 import testing.saker.SakerTestCase;
@@ -36,8 +37,15 @@ public class InterruptAcceptConnectionsTest extends SakerTestCase {
 			//the accepting is interrupted, we expect an appropriate exception, that is propagated through serverError
 			assertInstanceOf(servererror[0], IOException.class);
 
+			//interruption is kept, so joining would fail if the thread hasnt finished yet, clear the interrupted flag
+			Thread.interrupted();
+
 			//this shouldn't throw
-			excthread.joinThrow();
+			excthread.join(5000);
+			//it should be terminated
+			assertEquals(excthread.getState(), Thread.State.TERMINATED);
+			//throw the exception from the thread if any
+			IOUtils.throwExc(excthread.getException());
 		}
 	}
 }
