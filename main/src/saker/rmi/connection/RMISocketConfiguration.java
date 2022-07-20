@@ -32,6 +32,26 @@ public final class RMISocketConfiguration {
 	private boolean connectionInterruptible;
 
 	/**
+	 * Creates a new instance with default values.
+	 */
+	public RMISocketConfiguration() {
+	}
+
+	/**
+	 * Creates a new instance with values copied from the parameter.
+	 * 
+	 * @param copy
+	 *            The configuration to copy from.
+	 * @throws NullPointerException
+	 *             If the argument is <code>null</code>.
+	 */
+	public RMISocketConfiguration(RMISocketConfiguration copy) throws NullPointerException {
+		this.socketFactory = copy.socketFactory;
+		this.connectionTimeout = copy.connectionTimeout;
+		this.connectionInterruptible = copy.connectionInterruptible;
+	}
+
+	/**
 	 * Gets the socket factory.
 	 * 
 	 * @return The socket factory. May be <code>null</code>.
