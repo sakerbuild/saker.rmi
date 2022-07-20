@@ -55,8 +55,10 @@ public final class RMIOptions {
 	 * 
 	 * @param copy
 	 *            The options to copy the values from.
+	 * @throws NullPointerException
+	 *             If the argument is <code>null</code>.
 	 */
-	public RMIOptions(RMIOptions copy) {
+	public RMIOptions(RMIOptions copy) throws NullPointerException {
 		this.classLoaderResolver = copy.classLoaderResolver;
 		this.nullClassLoader = copy.nullClassLoader;
 		this.properties = copy.properties;
