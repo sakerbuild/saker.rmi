@@ -15,6 +15,7 @@
  */
 package saker.rmi.connection;
 
+import java.io.Closeable;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -130,7 +131,7 @@ public class RMIServer implements AutoCloseable {
 	 * @param port
 	 *            The port number to listen for connections, or 0 to automatically allocate.
 	 * @param bindaddress
-	 *            The local InetAddress the server will bind to.
+	 *            The local {@link InetAddress} the server will bind to.
 	 * @throws IOException
 	 *             In case of I/O error.
 	 * @see ServerSocket#ServerSocket(int, int, InetAddress)
@@ -473,6 +474,7 @@ public class RMIServer implements AutoCloseable {
 		shutdownServer(socketconfig.getSocketFactory(), address, timeout, socketconfig.isConnectionInterruptible());
 	}
 
+	@SuppressWarnings("try") // interruptor is not used
 	private static void shutdownServer(SocketFactory socketfactory, SocketAddress address, int connectiontimeoutms,
 			boolean interruptible) throws SocketException, IOException {
 		Objects.requireNonNull(address, "address");
@@ -581,6 +583,7 @@ public class RMIServer implements AutoCloseable {
 		return pingServer(socketconfig.getSocketFactory(), address, DEFAULT_CONNECTION_TIMEOUT_MS, false);
 	}
 
+	@SuppressWarnings("try") // interruptor is not used
 	private static boolean pingServer(SocketFactory socketfactory, SocketAddress address, int connectiontimeoutms,
 			boolean interruptible) {
 		Objects.requireNonNull(address, "address");
@@ -843,6 +846,7 @@ public class RMIServer implements AutoCloseable {
 				socketconfig.isConnectionInterruptible());
 	}
 
+	@SuppressWarnings("try") // interruptor is not used
 	private static RMIConnection newConnection(RMIOptions options, SocketFactory socketfactory, SocketAddress address,
 			int connectiontimeout, boolean interruptible) throws IOException {
 		Socket sockclose = null;
@@ -923,8 +927,10 @@ public class RMIServer implements AutoCloseable {
 		throw exc;
 	}
 
+	@SuppressWarnings("try") // interruptor is not used
 	private void acceptConnectionsImpl(Executor executor) {
-		try (ServerSocket accsocket = this.acceptorSocket) {
+		try (ServerSocket accsocket = this.acceptorSocket;
+				ConnectionInterruptor interruptor = ConnectionInterruptor.create(accsocket)) {
 			while (state == STATE_RUNNING) {
 				Socket accepted = accsocket.accept();
 
@@ -1317,15 +1323,15 @@ public class RMIServer implements AutoCloseable {
 		private static final AtomicReferenceFieldUpdater<RMIServer.ConnectionInterruptor, IOException> ARFU_closeException = AtomicReferenceFieldUpdater
 				.newUpdater(RMIServer.ConnectionInterruptor.class, IOException.class, "closeException");
 
-		protected final Socket socket;
+		protected final Closeable socket;
 		protected volatile IOException closeException;
 
-		private ConnectionInterruptor(Socket socket) {
+		private ConnectionInterruptor(Closeable socket) {
 			super(null);
 			this.socket = socket;
 		}
 
-		protected static ConnectionInterruptor create(Socket socket) {
+		protected static ConnectionInterruptor create(Closeable socket) {
 			ConnectionInterruptor result = new ConnectionInterruptor(socket);
 			result.begin();
 			return result;
