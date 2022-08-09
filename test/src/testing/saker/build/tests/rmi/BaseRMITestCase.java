@@ -148,8 +148,7 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 		try {
 			Method ofvirtual = Thread.class.getDeclaredMethod("ofVirtual");
 			Object builder = ofvirtual.invoke(null);
-			Class<?> builderitf = ReflectUtils.findInterfaceWithNameInHierarchy(builder.getClass(),
-					"java.lang.Thread$Builder");
+			Class<?> builderitf = Class.forName("java.lang.Thread$Builder");
 			builderitf.getMethod("allowSetThreadLocals", boolean.class).invoke(builder, false);
 			return (ThreadFactory) builderitf.getMethod("factory").invoke(builder);
 		} catch (ReflectiveOperationException e) {

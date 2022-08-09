@@ -222,6 +222,10 @@ public final class RMIConnection implements AutoCloseable {
 		}
 	}
 
+	boolean isCustomExecutor() {
+		return this.taskExecutor != null;
+	}
+
 	private void initTaskFields(RMIOptions options) {
 		Executor executor = options.executor;
 		if (executor != null) {
