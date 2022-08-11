@@ -98,7 +98,7 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 				executorlist.add(threadexecutor);
 				executorlist.add(new ThreadWorkPoolExecutor(workpool));
 
-				ThreadFactory vthreadfactory = createVirtualThreadFactory();
+				ThreadFactory vthreadfactory = createVirtualThreadFactory(true);
 				if (vthreadfactory != null) {
 					vhtreadexecutor = new ThreadExecutor(vthreadfactory);
 					executorlist.add(vhtreadexecutor);
@@ -140,20 +140,20 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 			if (workpool != null) {
 				workpool.closeInterruptible();
 			}
-
 		}
 	}
 
-	public static ThreadFactory createVirtualThreadFactory() throws Exception {
+	public static ThreadFactory createVirtualThreadFactory(boolean allowthreadlocals) throws Exception {
 		try {
 			Method ofvirtual = Thread.class.getDeclaredMethod("ofVirtual");
 			Object builder = ofvirtual.invoke(null);
 			Class<?> builderitf = Class.forName("java.lang.Thread$Builder");
-			builderitf.getMethod("allowSetThreadLocals", boolean.class).invoke(builder, false);
+			builderitf.getMethod("allowSetThreadLocals", boolean.class).invoke(builder, allowthreadlocals);
 			return (ThreadFactory) builderitf.getMethod("factory").invoke(builder);
 		} catch (ReflectiveOperationException e) {
 			if (queryJreMajorVersion() >= 19) {
 				//these methods/classes are expected to be present on JRE 19
+				//preview features also should be enabled for testing
 				throw e;
 			}
 			return null;

@@ -322,34 +322,6 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private static final class CustomThreadLocalRequestScopeHandler implements RequestScopeHandler {
-		private final ConcurrentMap<Thread, Integer> requests = new ConcurrentHashMap<>();
-
-		@Override
-		public Integer getCurrentServingRequest() {
-			return requests.get(Thread.currentThread());
-		}
-
-		@Override
-		public <T> T run(int reqid, Callable<? extends T> runnable) throws Exception {
-			Thread thread = Thread.currentThread();
-			Integer reqidinteger = Integer.valueOf(reqid);
-			Integer currentid = requests.put(thread, reqidinteger);
-			try {
-				return runnable.call();
-			} finally {
-				if (currentid == null) {
-					requests.remove(thread);
-				} else {
-					boolean success = requests.replace(thread, reqidinteger, currentid);
-					if (!success) {
-						throw new IllegalStateException("Internal request management error");
-					}
-				}
-			}
-		}
-	}
-
 	private static final class ScopeLocalRequestScopeHandler implements RequestScopeHandler {
 		private final Object scopeLocalInstance;
 		private final MethodHandle orElseMethod;
@@ -402,12 +374,10 @@ final class RMIStream implements Closeable {
 	}
 
 	private static final RequestScopeHandler REQUEST_SCOPE_HANDLER;
-	private static final boolean threadLocalsPossiblyDisableable;
 	static {
 		//TODO this should be directly compiled for JDK 19+ and should be released as a multi-release JAR.
 		//     this should be done when JDK 19 releases, or when ScopeLocal is no longer an incubator feature 
 		RequestScopeHandler scopehandler;
-		boolean threadlocalsaredisableable = false;
 		try {
 			//This class is only accessible if the jdk.incubator.concurrent module has been explicitly added to the
 			//java command. Otherwise the class won't be found.
@@ -434,14 +404,9 @@ final class RMIStream implements Closeable {
 			//this is okay, some class, method, or something wasn't found, as it was introduced in a new JRE version
 			scopehandler = new ThreadLocalRequestScopeHandler();
 
-			try {
-				Class.forName("java.lang.Thread$Builder").getMethod("allowSetThreadLocals", boolean.class);
-				threadlocalsaredisableable = true;
-			} catch (Exception e1) {
-			}
+			e.printStackTrace();
 		}
 		REQUEST_SCOPE_HANDLER = scopehandler;
-		threadLocalsPossiblyDisableable = threadlocalsaredisableable;
 	}
 
 	protected final RMIConnection connection;
@@ -471,8 +436,6 @@ final class RMIStream implements Closeable {
 	private final ClassLoaderReflectionElementSupplier nullClassLoaderSupplier;
 
 	private final Collection<RMIVariables> associatedVariables = ConcurrentHashMap.newKeySet();
-
-	protected final RequestScopeHandler requestScopeHandler;
 
 	private class CommandFlusher implements Closeable {
 		final StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer;
@@ -823,18 +786,6 @@ final class RMIStream implements Closeable {
 
 		this.nullClassLoader = connection.getNullClassLoader();
 		this.nullClassLoaderSupplier = new NullClassLoaderReflectionElementSupplier(this.nullClassLoader);
-
-		if (threadLocalsPossiblyDisableable && connection.isCustomExecutor()) {
-			//use custom thread local request scope handler to support threads
-			//that don't allow setting thread locals
-			//use a new instance per stream
-			//(won't cause issues, because each RMI variables is bound to one single stream
-			// therefore and redispatch request will be made through this stream
-			// so cases where we don't find the thread local managed by us won't happen)
-			requestScopeHandler = new CustomThreadLocalRequestScopeHandler();
-		} else {
-			requestScopeHandler = REQUEST_SCOPE_HANDLER;
-		}
 	}
 
 	public RMIStream(RMIConnection connection, StreamPair streams) {
@@ -3478,13 +3429,13 @@ final class RMIStream implements Closeable {
 	}
 
 	private void checkAborting() throws RMIIOFailureException {
-		checkAborting(requestScopeHandler.getCurrentServingRequest());
+		checkAborting(REQUEST_SCOPE_HANDLER.getCurrentServingRequest());
 	}
 
-	private Object invokeMethodWithRequestId(Method method, Object object, Object[] arguments, int reqid)
+	private static Object invokeMethodWithRequestId(Method method, Object object, Object[] arguments, int reqid)
 			throws InvocationTargetException {
 		try {
-			return requestScopeHandler.run(reqid, () -> {
+			return REQUEST_SCOPE_HANDLER.run(reqid, () -> {
 				try {
 					return ReflectUtils.invokeMethod(object, method, arguments);
 				} catch (IllegalArgumentException | IllegalAccessException e) {
@@ -3501,10 +3452,10 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private <C> C invokeConstructorWithRequestId(Constructor<C> constructor, Object[] arguments, int reqid)
+	private static <C> C invokeConstructorWithRequestId(Constructor<C> constructor, Object[] arguments, int reqid)
 			throws InvocationTargetException, IllegalAccessException, InstantiationException {
 		try {
-			return requestScopeHandler.run(reqid, () -> {
+			return REQUEST_SCOPE_HANDLER.run(reqid, () -> {
 				return ReflectUtils.invokeConstructor(constructor, arguments);
 			});
 		} catch (InvocationTargetException | IllegalAccessException | InstantiationException e) {
@@ -3517,7 +3468,7 @@ final class RMIStream implements Closeable {
 
 	Object callMethod(RMIVariables variables, int remoteid, MethodTransferProperties method, Object[] arguments)
 			throws RMIIOFailureException, InvocationTargetException {
-		Integer currentservingrequest = requestScopeHandler.getCurrentServingRequest();
+		Integer currentservingrequest = REQUEST_SCOPE_HANDLER.getCurrentServingRequest();
 		checkAborting(currentservingrequest, variables);
 		return callMethod(variables, remoteid, method, currentservingrequest, arguments);
 	}
@@ -3597,7 +3548,7 @@ final class RMIStream implements Closeable {
 
 	Object newRemoteInstance(RMIVariables variables, ConstructorTransferProperties<?> constructor, Object... arguments)
 			throws RMIIOFailureException, InvocationTargetException, RMICallFailedException {
-		Integer currentservingrequest = requestScopeHandler.getCurrentServingRequest();
+		Integer currentservingrequest = REQUEST_SCOPE_HANDLER.getCurrentServingRequest();
 		checkAborting(currentservingrequest, variables);
 		return newRemoteInstance(variables, constructor, currentservingrequest, arguments);
 	}
@@ -3627,7 +3578,7 @@ final class RMIStream implements Closeable {
 	Object newRemoteOnlyInstance(RMIVariables variables, int remoteclassloaderid, String classname,
 			String[] constructorargumentclasses, Object[] constructorarguments)
 			throws RMIIOFailureException, RMICallFailedException, InvocationTargetException {
-		Integer currentservingrequest = requestScopeHandler.getCurrentServingRequest();
+		Integer currentservingrequest = REQUEST_SCOPE_HANDLER.getCurrentServingRequest();
 		checkAborting(currentservingrequest, variables);
 		return newRemoteOnlyInstance(variables, remoteclassloaderid, classname, constructorargumentclasses,
 				constructorarguments, currentservingrequest);

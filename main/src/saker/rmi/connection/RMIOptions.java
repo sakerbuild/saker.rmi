@@ -173,13 +173,8 @@ public final class RMIOptions {
 	/**
 	 * Sets the {@link Executor} that should be used by the RMI connection when spawning new tasks.
 	 * <p>
-	 * <b>Important:</b> If you plan on using virtual threads for the {@link Executor}, then make sure that you also add
-	 * the jdk.incubator.concurrent module to the java process. (Command line:
-	 * <code>--add-modules jdk.incubator.concurrent</code>) <br>
-	 * This is necessary as the internal implementation uses thread locals to keep track of some information during a
-	 * request. If thread locals are disabled for virtual threads, then that can cause incorrect operation of the RMI
-	 * library. If the incubator module is added, the library will utilize ScopeLocals, which currently reside in the
-	 * jdk.incubator.concurrent module (in case JDK 19 early access).
+	 * <b>Important:</b> In newer releases of Java, thread locals can be disabled for threads. Saker.rmi doesn't support
+	 * executors that disable thread locals. (This may change in the future when Extent-Local Variables are introduced.)
 	 * <p>
 	 * The concurrency factor of the used executor should be unbounded, meaning that all tasks submitted should be able
 	 * to run in parallel. Otherwise the RMI connection and its streams could get deadlocked.
