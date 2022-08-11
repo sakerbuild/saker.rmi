@@ -287,24 +287,38 @@ final class RMIStream implements Closeable {
 	}
 
 	private static final class ThreadLocalRequestScopeHandler implements RequestScopeHandler {
-		private static final ThreadLocal<int[]> CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID = ThreadLocal
-				.withInitial(() -> new int[1]);
+		private static final ThreadLocal<int[]> CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID = new ThreadLocal<>();
 
 		@Override
 		public <T> T run(int reqid, Callable<? extends T> runnable) throws Exception {
 			int[] reqidint = CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID.get();
-			int currentid = reqidint[0];
-			reqidint[0] = reqid;
-			try {
-				return runnable.call();
-			} finally {
-				reqidint[0] = currentid;
+			if (reqidint == null) {
+				reqidint = new int[] { reqid };
+				CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID.set(reqidint);
+				try {
+					return runnable.call();
+				} finally {
+					//clear the thread local to avoid leaks
+					CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID.remove();
+				}
+			} else {
+				int currentid = reqidint[0];
+				reqidint[0] = reqid;
+				try {
+					return runnable.call();
+				} finally {
+					reqidint[0] = currentid;
+				}
 			}
 		}
 
 		@Override
 		public Integer getCurrentServingRequest() {
-			return nullizeRequestId(CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID.get()[0]);
+			int[] reqidint = CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID.get();
+			if (reqidint == null) {
+				return null;
+			}
+			return nullizeRequestId(reqidint[0]);
 		}
 	}
 
