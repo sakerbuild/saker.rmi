@@ -322,18 +322,20 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private static final class ScopeLocalRequestScopeHandler implements RequestScopeHandler {
+	//ScopeLocal (or called ExtentLocal, not yet finalized JEP) requets handler is commented out
+	//as it is not yet delivered in the upcoming Java releases.
+	/*private static final class ScopeLocalRequestScopeHandler implements RequestScopeHandler {
 		private final Object scopeLocalInstance;
 		private final MethodHandle orElseMethod;
 		private final MethodHandle whereCallable;
-
+	
 		public ScopeLocalRequestScopeHandler(Object scopeLocalInstance, MethodHandle orElseMethod,
 				MethodHandle whereCallable) {
 			this.scopeLocalInstance = scopeLocalInstance;
 			this.whereCallable = whereCallable;
 			this.orElseMethod = orElseMethod.bindTo(scopeLocalInstance);
 		}
-
+	
 		@Override
 		public <T> T run(int reqid, Callable<? extends T> runnable) throws Exception {
 			try {
@@ -357,7 +359,7 @@ final class RMIStream implements Closeable {
 				throw ObjectUtils.sneakyThrow(e);
 			}
 		}
-
+	
 		@Override
 		public Integer getCurrentServingRequest() {
 			try {
@@ -371,14 +373,15 @@ final class RMIStream implements Closeable {
 				throw ObjectUtils.sneakyThrow(e);
 			}
 		}
-	}
+	}*/
 
 	private static final RequestScopeHandler REQUEST_SCOPE_HANDLER;
 	static {
 		//TODO this should be directly compiled for JDK 19+ and should be released as a multi-release JAR.
 		//     this should be done when JDK 19 releases, or when ScopeLocal is no longer an incubator feature 
 		RequestScopeHandler scopehandler;
-		try {
+		//ScopeLocal/ExtentLocal based request handler is not yet delivered, commented out, see above
+		/*try {
 			//This class is only accessible if the jdk.incubator.concurrent module has been explicitly added to the
 			//java command. Otherwise the class won't be found.
 			//So if the module is added, it's fine to use it, and we don't need other external parameters
@@ -400,11 +403,10 @@ final class RMIStream implements Closeable {
 			}
 			scopehandler = new ScopeLocalRequestScopeHandler(instance, orElse, whereCallable);
 		} catch (NoSuchMethodException | ClassNotFoundException | IllegalAccessException | ClassCastException
-				| WrongMethodTypeException e) {
+				| WrongMethodTypeException e) */
+		{
 			//this is okay, some class, method, or something wasn't found, as it was introduced in a new JRE version
 			scopehandler = new ThreadLocalRequestScopeHandler();
-
-			e.printStackTrace();
 		}
 		REQUEST_SCOPE_HANDLER = scopehandler;
 	}
