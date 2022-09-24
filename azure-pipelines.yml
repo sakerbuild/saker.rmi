@@ -30,6 +30,18 @@ strategy:
     Java15:
       J_JAVA_MAJOR: '15'
       JAVA_EXEC_HOME: $(JAVA_HOME_15_X64)
+    Java16:
+      J_JAVA_MAJOR: '16'
+      JAVA_EXEC_HOME: $(JAVA_HOME_16_X64)
+    Java17:
+      J_JAVA_MAJOR: '17'
+      JAVA_EXEC_HOME: $(JAVA_HOME_17_X64)
+    Java18:
+      J_JAVA_MAJOR: '18'
+      JAVA_EXEC_HOME: $(JAVA_HOME_18_X64)
+    Java19:
+      J_JAVA_MAJOR: '19'
+      JAVA_EXEC_HOME: $(JAVA_HOME_19_X64)
 
 steps:
 - script: curl -L https://api.nest.saker.build/bundle/download/saker.build-v$(curl -s https://mirror.nest.saker.build/badges/saker.build/latest.txt) -o saker.build.jar
