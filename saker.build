@@ -161,9 +161,5 @@ testjava18(){
 testjava19(){
 	test(
 		jdk: saker.java.sdk(19),
-		additionaljvmparameters: [
-			--add-modules 
-			jdk.incubator.concurrent
-		]
 	)
 }
