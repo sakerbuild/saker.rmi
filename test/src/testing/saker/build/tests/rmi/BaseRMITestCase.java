@@ -26,7 +26,6 @@ import java.util.concurrent.ThreadFactory;
 import saker.rmi.connection.RMIConnection;
 import saker.rmi.connection.RMIOptions;
 import saker.rmi.connection.RMITestUtil;
-import saker.util.ReflectUtils;
 import saker.util.function.ThrowingRunnable;
 import saker.util.io.IOUtils;
 import saker.util.io.ResourceCloser;
@@ -55,7 +54,7 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 		//dump the threads before the destroy() call
 		ThreadUtils.dumpThreadGroupStackTraces(System.out, threadgroup);
 		try {
-			threadgroup.destroy();
+			destroyThreadGroup(threadgroup);
 		} catch (IllegalThreadStateException e) {
 			exc = IOUtils.addExc(exc, e);
 		}
@@ -63,6 +62,13 @@ public abstract class BaseRMITestCase extends SakerTestCase {
 			throw exc;
 		}
 		IOUtils.throwExc(exc);
+	}
+
+	//suppress ThreadGroup.destroy() deprecation warning
+	//method is exported to limit scope of suppression
+	@SuppressWarnings({ "deprecation", "removal" })
+	private static void destroyThreadGroup(ThreadGroup threadgroup) {
+		threadgroup.destroy();
 	}
 
 	protected abstract void runTestImpl() throws Exception;

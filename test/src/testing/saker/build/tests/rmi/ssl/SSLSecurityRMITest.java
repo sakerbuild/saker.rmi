@@ -602,7 +602,7 @@ public class SSLSecurityRMITest extends SakerTestCase {
 				trustedcert = (X509Certificate) chain[1];
 			}
 
-			System.out.println("Trusted cert is: " + trustedcert.getIssuerDN());
+			System.out.println("Trusted cert is: " + trustedcert.getIssuerX500Principal());
 			trustanchors.add(new TrustAnchor(trustedcert, null));
 		}
 		System.out.println("SSLSecurityRMITest.getTrustManagerFactory() " + trustanchors);

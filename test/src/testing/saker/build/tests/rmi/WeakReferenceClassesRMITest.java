@@ -54,8 +54,7 @@ public class WeakReferenceClassesRMITest extends BaseRMITestCase {
 		//null out any outstanding references to the classloader or the classes
 		this.cl = null;
 		for (int i = 0; i < 1000 / GC_TIMEOUT_MS; i++) {
-			System.gc();
-			System.runFinalization();
+			doGc();
 			if (wref.get() == null) {
 				return;
 			}
@@ -65,6 +64,14 @@ public class WeakReferenceClassesRMITest extends BaseRMITestCase {
 			}
 		}
 		fail("Failed to garbage collect class");
+	}
+
+	//suppress runFinalization deprecation warning
+	//method is exported to limit scope of suppression
+	@SuppressWarnings({ "deprecation", "removal" })
+	private static void doGc() {
+		System.gc();
+		System.runFinalization();
 	}
 
 	private WeakReference<Class<?>> execute() throws Exception {

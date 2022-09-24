@@ -1680,6 +1680,9 @@ final class RMIStream implements Closeable {
 	private static class ClassSetPartiallyReadException extends Exception {
 		private static final long serialVersionUID = 1L;
 
+		//suppress warning:
+		//   non-transient instance field of a serializable class declared with a non-serializable type
+		@SuppressWarnings("serial")
 		private Set<Class<?>> result;
 
 		public ClassSetPartiallyReadException(Set<Class<?>> result) {
@@ -1703,7 +1706,7 @@ final class RMIStream implements Closeable {
 			classsuppliers.add(readClass(in));
 		}
 		ClassSetPartiallyReadException partialexc = null;
-		Set<Class<?>> result = new LinkedHashSet<>();
+		LinkedHashSet<Class<?>> result = new LinkedHashSet<>();
 		for (ClassReflectionElementSupplier cres : classsuppliers) {
 			try {
 				Class<?> c = cres.get(connection);
