@@ -33,7 +33,9 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.LockSupport;
+import java.util.concurrent.locks.ReentrantLock;
 
 import saker.rmi.connection.RMIStream.ClassLoaderNotFoundIOException;
 import saker.rmi.exception.RMIIOFailureException;
@@ -159,14 +161,14 @@ public final class RMIConnection implements AutoCloseable {
 	private volatile String exitMessage = null;
 	private volatile boolean aborting = false;
 
-	private final Object stateModifyLock = new Object();
+	private final Lock stateModifyLock = new ReentrantLock();
 
 	@SuppressWarnings("unused")
 	private volatile int variablesIdentifierCounter = 1;
 
 	private final ConcurrentMap<Integer, RMIVariables> variablesByLocalId = new ConcurrentSkipListMap<>();
 	private final ConcurrentMap<String, NamedRMIVariables> variablesByNames = new ConcurrentSkipListMap<>();
-	private final ConcurrentSkipListMap<String, Object> namedVariablesGetLocks = new ConcurrentSkipListMap<>();
+	private final ConcurrentSkipListMap<String, Lock> namedVariablesGetLocks = new ConcurrentSkipListMap<>();
 
 	private final int maxStreamCount;
 
@@ -256,11 +258,14 @@ public final class RMIConnection implements AutoCloseable {
 				public boolean add(AutoCloseable s) {
 					//lock on state modify lock, so if close is being called concurrently,
 					//we still add the socket to the collection
-					synchronized (stateModifyLock) {
+					stateModifyLock.lock();
+					try {
 						if (aborting) {
 							return false;
 						}
 						connectingStreamSockets.add(s);
+					} finally {
+						stateModifyLock.unlock();
 					}
 					return true;
 				}
@@ -382,9 +387,12 @@ public final class RMIConnection implements AutoCloseable {
 		}
 		int identifier = AIFU_variablesIdentifierCounter.getAndIncrement(this);
 		RMIStream stream;
-		synchronized (stateModifyLock) {
+		final Lock namedvarlock = getNamedVariablesGetLock(name);
+		stateModifyLock.lock();
+		try {
 			checkAborting();
-			synchronized (getNamedVariablesGetLock(name)) {
+			namedvarlock.lock();
+			try {
 				result = variablesByNames.get(name);
 				if (result != null) {
 					result.increaseReference();
@@ -394,8 +402,12 @@ public final class RMIConnection implements AutoCloseable {
 				int varsremoteid = stream.createNewVariables(name, identifier);
 				result = new NamedRMIVariables(name, identifier, varsremoteid, this, stream);
 				variablesByNames.put(name, result);
+			} finally {
+				namedvarlock.unlock();
 			}
 			variablesByLocalId.put(identifier, result);
+		} finally {
+			stateModifyLock.unlock();
 		}
 		stream.associateVariables(result);
 		return result;
@@ -426,9 +438,12 @@ public final class RMIConnection implements AutoCloseable {
 		//    so the other endpoint still could use this, but it is unlikely
 		//    anyway, event in that case, the variables will still be auto-closed when the last requets finishes on it
 		boolean aborting;
-		synchronized (stateModifyLock) {
+		stateModifyLock.lock();
+		try {
 			variablesByLocalId.put(identifier, result);
 			aborting = this.aborting;
+		} finally {
+			stateModifyLock.unlock();
 		}
 		stream.associateVariables(result);
 		if (aborting) {
@@ -586,7 +601,8 @@ public final class RMIConnection implements AutoCloseable {
 		if (isRemoteObject(listener)) {
 			throw new IllegalArgumentException("Listener must be a local object.");
 		}
-		synchronized (stateModifyLock) {
+		stateModifyLock.lock();
+		try {
 			if (aborting && this.variablesByLocalId.isEmpty()) {
 				//listener to be called outside of lock
 			} else {
@@ -595,6 +611,8 @@ public final class RMIConnection implements AutoCloseable {
 				}
 				return;
 			}
+		} finally {
+			stateModifyLock.unlock();
 		}
 		try {
 			listener.onConnectionClosed();
@@ -824,8 +842,11 @@ public final class RMIConnection implements AutoCloseable {
 
 	void closeVariables(RMIVariables variables) {
 		int identifier = variables.getLocalIdentifier();
-		synchronized (stateModifyLock) {
+		stateModifyLock.lock();
+		try {
 			closeVariablesLocked(variables, identifier);
+		} finally {
+			stateModifyLock.unlock();
 		}
 	}
 
@@ -922,20 +943,26 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	void addStream(RMIStream stream) throws IOException {
-		synchronized (stateModifyLock) {
+		stateModifyLock.lock();
+		try {
 			if (aborting) {
 				//the connection is already aborting, ignore the stream addition, silently close it
 				IOUtils.close(stream);
 				return;
 			}
 			allStreams.add(stream);
+		} finally {
+			stateModifyLock.unlock();
 		}
 		stream.start();
 	}
 
 	void removeStream(RMIStream stream) throws IOException {
-		synchronized (stateModifyLock) {
+		stateModifyLock.lock();
+		try {
 			allStreams.remove(stream);
+		} finally {
+			stateModifyLock.unlock();
 		}
 		IOUtils.close(stream);
 	}
@@ -945,7 +972,8 @@ public final class RMIConnection implements AutoCloseable {
 
 		RMIStream minstream;
 		boolean connect = false;
-		synchronized (stateModifyLock) {
+		stateModifyLock.lock();
+		try {
 			//choose from existing streams
 			Iterator<RMIStream> it = allStreams.iterator();
 			if (!it.hasNext()) {
@@ -1007,6 +1035,8 @@ public final class RMIConnection implements AutoCloseable {
 					connect = true;
 				}
 			}
+		} finally {
+			stateModifyLock.unlock();
 		}
 		if (connect) {
 			//if connection fails, then return the found min stream (if any)
@@ -1058,8 +1088,11 @@ public final class RMIConnection implements AutoCloseable {
 	 * @return The stream count.
 	 */
 	int getStreamCount() {
-		synchronized (stateModifyLock) {
+		stateModifyLock.lock();
+		try {
 			return allStreams.size();
+		} finally {
+			stateModifyLock.unlock();
 		}
 	}
 
@@ -1281,8 +1314,11 @@ public final class RMIConnection implements AutoCloseable {
 		} else {
 			//set the aborting flag while locked, so no more variables and other state related objects are added to the connection
 			//(if we didn't lock, then we risk new requests/variables/etc... being added after setting the aborting flag
-			synchronized (stateModifyLock) {
+			stateModifyLock.lock();
+			try {
 				aborting = true;
+			} finally {
+				stateModifyLock.unlock();
 			}
 		}
 		if (onerror) {
@@ -1308,8 +1344,11 @@ public final class RMIConnection implements AutoCloseable {
 			//if there is at least 1 variable closed during this method call, then that will call closeIfAbortingAndNoVariablesLocked()
 			//when it gets closed
 
-			synchronized (stateModifyLock) {
+			stateModifyLock.lock();
+			try {
 				closeIfAbortingAndNoVariablesLocked();
+			} finally {
+				stateModifyLock.unlock();
 			}
 		}
 
@@ -1367,10 +1406,13 @@ public final class RMIConnection implements AutoCloseable {
 
 	private RMIVariables newUnnamedRemoteVariables(int remoteid, RMIStream stream) {
 		RMIVariables result;
-		synchronized (stateModifyLock) {
+		stateModifyLock.lock();
+		try {
 			checkAborting();
 			result = new RMIVariables(AIFU_variablesIdentifierCounter.getAndIncrement(this), remoteid, this, stream);
 			variablesByLocalId.put(result.getLocalIdentifier(), result);
+		} finally {
+			stateModifyLock.unlock();
 		}
 		stream.associateVariables(result);
 		return result;
@@ -1378,9 +1420,12 @@ public final class RMIConnection implements AutoCloseable {
 
 	private RMIVariables newNamedRemoteVariables(String name, int remoteid, RMIStream stream) throws IOException {
 		NamedRMIVariables result;
-		synchronized (stateModifyLock) {
+		final Lock namedvarlock = getNamedVariablesGetLock(name);
+		stateModifyLock.lock();
+		try {
 			checkAborting();
-			synchronized (getNamedVariablesGetLock(name)) {
+			namedvarlock.lock();
+			try {
 				result = variablesByNames.get(name);
 				if (result != null) {
 					return result;
@@ -1393,15 +1438,19 @@ public final class RMIConnection implements AutoCloseable {
 					IOException cause = IOUtils.closeExc(result);
 					throw new IOException("Variables with name defined more than once: " + name, cause);
 				}
+			} finally {
+				namedvarlock.unlock();
 			}
 			variablesByLocalId.put(result.getLocalIdentifier(), result);
+		} finally {
+			stateModifyLock.unlock();
 		}
 		stream.associateVariables(result);
 		return result;
 	}
 
-	private Object getNamedVariablesGetLock(String name) {
-		return namedVariablesGetLocks.computeIfAbsent(name, Functionals.objectComputer());
+	private Lock getNamedVariablesGetLock(String name) {
+		return namedVariablesGetLocks.computeIfAbsent(name, k -> new ReentrantLock());
 	}
 
 	/**

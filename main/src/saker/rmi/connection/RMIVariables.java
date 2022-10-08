@@ -1078,17 +1078,19 @@ public class RMIVariables implements AutoCloseable {
 	 * @return <code>true</code> if this object is strongly referenced by this variables instance.
 	 */
 	boolean isLocalObjectKnown(Object localobject) {
+		IdentityRefSearcher refsearcher = new IdentityRefSearcher(localobject);
 		synchronized (refSync) {
 			@SuppressWarnings("unlikely-arg-type")
-			LocalObjectReference gotobjref = localObjectsToLocalReferences.get(new IdentityRefSearcher(localobject));
+			LocalObjectReference gotobjref = localObjectsToLocalReferences.get(refsearcher);
 			return gotobjref != null && gotobjref.strongReference != null;
 		}
 	}
 
 	int getLocalInstanceIdIncreaseReference(Object localobject) {
+		IdentityRefSearcher refsearcher = new IdentityRefSearcher(localobject);
 		synchronized (refSync) {
 			@SuppressWarnings("unlikely-arg-type")
-			LocalObjectReference gotobjref = localObjectsToLocalReferences.get(new IdentityRefSearcher(localobject));
+			LocalObjectReference gotobjref = localObjectsToLocalReferences.get(refsearcher);
 			if (gotobjref != null) {
 				synchronized (gotobjref) {
 					++gotobjref.remoteReferenceCount;
