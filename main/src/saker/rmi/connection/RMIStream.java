@@ -27,11 +27,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.ObjectStreamClass;
 import java.io.OutputStream;
-import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodHandles.Lookup;
-import java.lang.invoke.MethodType;
-import java.lang.invoke.WrongMethodTypeException;
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Executable;
@@ -52,7 +48,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
@@ -280,26 +275,26 @@ final class RMIStream implements Closeable {
 		COMMAND_HANDLERS[COMMAND_METHODCALL_ASYNC] = (GarbageCollectionPreventingCommandHandler) RMIStream::handleCommandMethodCallAsync;
 	}
 
-	private interface RequestScopeHandler {
+	interface RequestScopeHandler {
 		public Integer getCurrentServingRequest();
 
 		public <T> T run(int reqid, Callable<? extends T> runnable) throws Exception;
 	}
 
-	private static final class ThreadLocalRequestScopeHandler implements RequestScopeHandler {
-		private static final ThreadLocal<int[]> CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID = new ThreadLocal<>();
+	public static final class ThreadLocalRequestScopeHandler implements RequestScopeHandler {
+		private final ThreadLocal<int[]> currentThreadPreviousMethodCallRequestIdThreadLocal = new ThreadLocal<>();
 
 		@Override
 		public <T> T run(int reqid, Callable<? extends T> runnable) throws Exception {
-			int[] reqidint = CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID.get();
+			int[] reqidint = currentThreadPreviousMethodCallRequestIdThreadLocal.get();
 			if (reqidint == null) {
 				reqidint = new int[] { reqid };
-				CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID.set(reqidint);
+				currentThreadPreviousMethodCallRequestIdThreadLocal.set(reqidint);
 				try {
 					return runnable.call();
 				} finally {
 					//clear the thread local to avoid leaks
-					CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID.remove();
+					currentThreadPreviousMethodCallRequestIdThreadLocal.remove();
 				}
 			} else {
 				int currentid = reqidint[0];
@@ -314,7 +309,7 @@ final class RMIStream implements Closeable {
 
 		@Override
 		public Integer getCurrentServingRequest() {
-			int[] reqidint = CURRENT_THREAD_PREVIOUS_METHOD_CALL_REQUEST_ID.get();
+			int[] reqidint = currentThreadPreviousMethodCallRequestIdThreadLocal.get();
 			if (reqidint == null) {
 				return null;
 			}
@@ -375,44 +370,39 @@ final class RMIStream implements Closeable {
 		}
 	}*/
 
-	private static final RequestScopeHandler REQUEST_SCOPE_HANDLER;
-	static {
-		//TODO this should be directly compiled for JDK 19+ and should be released as a multi-release JAR.
-		//     this should be done when JDK 19 releases, or when ScopeLocal is no longer an incubator feature 
-		RequestScopeHandler scopehandler;
-		//ScopeLocal/ExtentLocal based request handler is not yet delivered, commented out, see above
-		/*try {
-			//This class is only accessible if the jdk.incubator.concurrent module has been explicitly added to the
-			//java command. Otherwise the class won't be found.
-			//So if the module is added, it's fine to use it, and we don't need other external parameters
-			//to control whether or not we should use it.
-			Class<?> scopelocalclass = Class.forName("jdk.incubator.concurrent.ScopeLocal");
-			Lookup lookup = MethodHandles.lookup();
-			MethodHandle orElse = lookup.findVirtual(scopelocalclass, "orElse", MethodType.genericMethodType(1));
-			MethodHandle whereCallable = lookup.findStatic(scopelocalclass, "where", MethodType.methodType(Object.class,
-					new Class<?>[] { scopelocalclass, Object.class, Callable.class }));
-			MethodHandle newInstanceMethod = lookup.findStatic(scopelocalclass, "newInstance",
-					MethodType.methodType(scopelocalclass));
-			Object instance;
-			try {
-				instance = newInstanceMethod.invoke();
-			} catch (Throwable e) {
-				//new instance creation failed, this shouldn't happen
-				//we throw it directly, as the newInstance method doesn't throw checked exceptions
-				throw ObjectUtils.sneakyThrow(e);
-			}
-			scopehandler = new ScopeLocalRequestScopeHandler(instance, orElse, whereCallable);
-		} catch (NoSuchMethodException | ClassNotFoundException | IllegalAccessException | ClassCastException
-				| WrongMethodTypeException e) */
-		{
-			//this is okay, some class, method, or something wasn't found, as it was introduced in a new JRE version
-			scopehandler = new ThreadLocalRequestScopeHandler();
+	//TODO this should be directly compiled for JDK 19+ and should be released as a multi-release JAR.
+	//     this should be done when JDK 19 releases, or when ScopeLocal is no longer an incubator feature 
+	//ScopeLocal/ExtentLocal based request handler is not yet delivered, commented out, see above
+	//leftover code, to be removed, modified, adapted, when extent locals ship
+	/*try {
+		//This class is only accessible if the jdk.incubator.concurrent module has been explicitly added to the
+		//java command. Otherwise the class won't be found.
+		//So if the module is added, it's fine to use it, and we don't need other external parameters
+		//to control whether or not we should use it.
+		Class<?> scopelocalclass = Class.forName("jdk.incubator.concurrent.ScopeLocal");
+		Lookup lookup = MethodHandles.lookup();
+		MethodHandle orElse = lookup.findVirtual(scopelocalclass, "orElse", MethodType.genericMethodType(1));
+		MethodHandle whereCallable = lookup.findStatic(scopelocalclass, "where", MethodType.methodType(Object.class,
+				new Class<?>[] { scopelocalclass, Object.class, Callable.class }));
+		MethodHandle newInstanceMethod = lookup.findStatic(scopelocalclass, "newInstance",
+				MethodType.methodType(scopelocalclass));
+		Object instance;
+		try {
+			instance = newInstanceMethod.invoke();
+		} catch (Throwable e) {
+			//new instance creation failed, this shouldn't happen
+			//we throw it directly, as the newInstance method doesn't throw checked exceptions
+			throw ObjectUtils.sneakyThrow(e);
 		}
-		REQUEST_SCOPE_HANDLER = scopehandler;
-	}
+		RequestScopeHandler scopehandler = new ScopeLocalRequestScopeHandler(instance, orElse, whereCallable);
+	} catch (NoSuchMethodException | ClassNotFoundException | IllegalAccessException | ClassCastException
+			| WrongMethodTypeException e) {
+		//handle exception
+	}*/
 
 	protected final RMIConnection connection;
 	protected final RequestHandler requestHandler;
+	protected final RequestScopeHandler requestScopeHandler;
 
 	protected final BlockOutputStream blockOut;
 	protected final BlockInputStream blockIn;
@@ -775,6 +765,7 @@ final class RMIStream implements Closeable {
 
 	public RMIStream(RMIConnection connection, InputStream is, OutputStream os) {
 		this.requestHandler = new RequestHandler(connection);
+		this.requestScopeHandler = connection.getRequestScopeHandler();
 
 		this.blockOut = new BlockOutputStream(os);
 		this.blockIn = new BlockInputStream(new UnsyncBufferedInputStream(is));
@@ -3464,13 +3455,13 @@ final class RMIStream implements Closeable {
 	}
 
 	private void checkAborting() throws RMIIOFailureException {
-		checkAborting(REQUEST_SCOPE_HANDLER.getCurrentServingRequest());
+		checkAborting(requestScopeHandler.getCurrentServingRequest());
 	}
 
-	private static Object invokeMethodWithRequestId(Method method, Object object, Object[] arguments, int reqid)
+	private Object invokeMethodWithRequestId(Method method, Object object, Object[] arguments, int reqid)
 			throws InvocationTargetException {
 		try {
-			return REQUEST_SCOPE_HANDLER.run(reqid, () -> {
+			return requestScopeHandler.run(reqid, () -> {
 				try {
 					return ReflectUtils.invokeMethod(object, method, arguments);
 				} catch (IllegalArgumentException | IllegalAccessException e) {
@@ -3487,10 +3478,10 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private static <C> C invokeConstructorWithRequestId(Constructor<C> constructor, Object[] arguments, int reqid)
+	private <C> C invokeConstructorWithRequestId(Constructor<C> constructor, Object[] arguments, int reqid)
 			throws InvocationTargetException, IllegalAccessException, InstantiationException {
 		try {
-			return REQUEST_SCOPE_HANDLER.run(reqid, () -> {
+			return requestScopeHandler.run(reqid, () -> {
 				return ReflectUtils.invokeConstructor(constructor, arguments);
 			});
 		} catch (InvocationTargetException | IllegalAccessException | InstantiationException e) {
@@ -3503,7 +3494,7 @@ final class RMIStream implements Closeable {
 
 	Object callMethod(RMIVariables variables, int remoteid, MethodTransferProperties method, Object[] arguments)
 			throws RMIIOFailureException, InvocationTargetException {
-		Integer currentservingrequest = REQUEST_SCOPE_HANDLER.getCurrentServingRequest();
+		Integer currentservingrequest = requestScopeHandler.getCurrentServingRequest();
 		checkAborting(currentservingrequest, variables);
 		return callMethod(variables, remoteid, method, currentservingrequest, arguments);
 	}
@@ -3583,7 +3574,7 @@ final class RMIStream implements Closeable {
 
 	Object newRemoteInstance(RMIVariables variables, ConstructorTransferProperties<?> constructor, Object... arguments)
 			throws RMIIOFailureException, InvocationTargetException, RMICallFailedException {
-		Integer currentservingrequest = REQUEST_SCOPE_HANDLER.getCurrentServingRequest();
+		Integer currentservingrequest = requestScopeHandler.getCurrentServingRequest();
 		checkAborting(currentservingrequest, variables);
 		return newRemoteInstance(variables, constructor, currentservingrequest, arguments);
 	}
@@ -3613,7 +3604,7 @@ final class RMIStream implements Closeable {
 	Object newRemoteOnlyInstance(RMIVariables variables, int remoteclassloaderid, String classname,
 			String[] constructorargumentclasses, Object[] constructorarguments)
 			throws RMIIOFailureException, RMICallFailedException, InvocationTargetException {
-		Integer currentservingrequest = REQUEST_SCOPE_HANDLER.getCurrentServingRequest();
+		Integer currentservingrequest = requestScopeHandler.getCurrentServingRequest();
 		checkAborting(currentservingrequest, variables);
 		return newRemoteOnlyInstance(variables, remoteclassloaderid, classname, constructorargumentclasses,
 				constructorarguments, currentservingrequest);

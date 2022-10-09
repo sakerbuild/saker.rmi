@@ -38,6 +38,8 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 
 import saker.rmi.connection.RMIStream.ClassLoaderNotFoundIOException;
+import saker.rmi.connection.RMIStream.RequestScopeHandler;
+import saker.rmi.connection.RMIStream.ThreadLocalRequestScopeHandler;
 import saker.rmi.exception.RMIIOFailureException;
 import saker.rmi.exception.RMIListenerException;
 import saker.rmi.exception.RMIRuntimeException;
@@ -182,6 +184,7 @@ public final class RMIConnection implements AutoCloseable {
 
 	@SuppressWarnings("unused")
 	private volatile int requestIdCounter;
+	private final RequestScopeHandler requestScopeHandler = new ThreadLocalRequestScopeHandler();
 
 	@SuppressWarnings("unused") // used through its atomic field updater
 	private volatile int offeredStreamTaskCount;
@@ -230,9 +233,13 @@ public final class RMIConnection implements AutoCloseable {
 	boolean isCustomExecutor() {
 		return this.taskExecutor != null;
 	}
-	
+
 	int getNextRequestId() {
 		return AIFU_requestIdCounter.incrementAndGet(this);
+	}
+
+	RequestScopeHandler getRequestScopeHandler() {
+		return requestScopeHandler;
 	}
 
 	private void initTaskFields(RMIOptions options) {
