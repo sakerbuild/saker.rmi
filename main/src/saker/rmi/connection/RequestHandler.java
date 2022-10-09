@@ -20,7 +20,6 @@ import java.io.IOException;
 import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import java.util.concurrent.locks.LockSupport;
 
@@ -204,28 +203,27 @@ class RequestHandler implements Closeable {
 		}
 	}
 
-	private static final AtomicIntegerFieldUpdater<RequestHandler> ARFU_requestIdCounter = AtomicIntegerFieldUpdater
-			.newUpdater(RequestHandler.class, "requestIdCounter");
-	@SuppressWarnings("unused")
-	private volatile int requestIdCounter;
-
 	protected final ConcurrentNavigableMap<Integer, Request> requests = new ConcurrentSkipListMap<>();
+	private final RMIConnection connection;
 
-	public RequestHandler() {
+	public RequestHandler(RMIConnection connection) {
+		this.connection = connection;
 	}
 
 	public Request newRequest() {
-		int id = ARFU_requestIdCounter.incrementAndGet(this);
+		int id = connection.getNextRequestId();
 		Request result = new Request(this, id);
 		requests.put(id, result);
 		return result;
 	}
 
-	public void addResponse(int requestid, Object response) {
+	public boolean addResponse(int requestid, Object response) {
 		Request req = requests.get(requestid);
-		if (req != null) {
-			req.setResponse(response);
+		if (req == null) {
+			return false;
 		}
+		req.setResponse(response);
+		return true;
 	}
 
 	@Override

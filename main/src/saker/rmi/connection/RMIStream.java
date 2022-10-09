@@ -737,6 +737,8 @@ final class RMIStream implements Closeable {
 					| ServiceConfigurationError e) {
 				streamerrorexc = e;
 			}
+			//close the request handler, as the stream reading is exiting
+			requestHandler.close();
 			if (streamerrorexc != null) {
 				streamError(streamerrorexc);
 				//the stream error exception was handled
@@ -772,7 +774,7 @@ final class RMIStream implements Closeable {
 	}
 
 	public RMIStream(RMIConnection connection, InputStream is, OutputStream os) {
-		this.requestHandler = connection.getRequestHandler();
+		this.requestHandler = new RequestHandler(connection);
 
 		this.blockOut = new BlockOutputStream(os);
 		this.blockIn = new BlockInputStream(new UnsyncBufferedInputStream(is));
@@ -800,7 +802,11 @@ final class RMIStream implements Closeable {
 
 	@Override
 	public void close() throws IOException {
-		writeStreamCloseIfNotWritten();
+		try {
+			writeStreamCloseIfNotWritten();
+		} finally {
+			requestHandler.close();
+		}
 	}
 
 	private void writeStreamCloseIfNotWritten() throws IOException {
@@ -1087,7 +1093,12 @@ final class RMIStream implements Closeable {
 			simplewriter.accept(out, obj);
 			return true;
 		}
-		ClassTransferProperties<?> objclassproperties = variables.getProperties().getClassProperties(objclass);
+		RMITransferPropertiesHolder properties = variables.getProperties();
+		if (properties == null) {
+			//variables close check just in case it gets closed meanwhile
+			throw new RMIObjectTransferFailureException("RMI variables is no longer available.");
+		}
+		ClassTransferProperties<?> objclassproperties = properties.getClassProperties(objclass);
 		if (objclassproperties != null) {
 			RMIObjectWriteHandler writehandler = objclassproperties.getWriteHandler();
 			writeCustomizableWithWriteHandler(variables, obj, objclass, out, writehandler);
@@ -2479,8 +2490,9 @@ final class RMIStream implements Closeable {
 				Constructor<?> constructor = readConstructor(in);
 				Object[] args = readMethodParameters(variables, in);
 
-				requestHandler.addResponse(dispatchid,
+				boolean responseadded = requestHandler.addResponse(dispatchid,
 						new NewInstanceRedispatchResponse(variables, reqid, constructor, args));
+				checkRedispatchResponseAdded(responseadded);
 			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
 					| ServiceConfigurationError e) {
 				writeCommandExceptionResult(COMMAND_NEWINSTANCERESULT_FAIL, reqid, e, false, 0);
@@ -2555,8 +2567,10 @@ final class RMIStream implements Closeable {
 					args[i] = readObject(variables, in);
 				}
 
-				requestHandler.addResponse(dispatchid, new UnknownClassNewInstanceRedispatchResponse(classname, args,
-						reqid, variables, cl, argclassnames));
+				boolean responseadded = requestHandler.addResponse(dispatchid,
+						new UnknownClassNewInstanceRedispatchResponse(classname, args, reqid, variables, cl,
+								argclassnames));
+				checkRedispatchResponseAdded(responseadded);
 			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
 					| ServiceConfigurationError e) {
 				writeCommandExceptionResult(COMMAND_UNKNOWN_NEWINSTANCE_RESULT, reqid, e, false, 0);
@@ -2635,7 +2649,7 @@ final class RMIStream implements Closeable {
 					return;
 				}
 
-				transfermethod = variables.getProperties().getExecutableProperties(method);
+				transfermethod = getPropertiesCheckClosed(variables).getExecutableProperties(method);
 				args = readMethodParameters(variables, in);
 			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
 					| ServiceConfigurationError e) {
@@ -2672,11 +2686,13 @@ final class RMIStream implements Closeable {
 					return;
 				}
 
-				MethodTransferProperties transfermethod = variables.getProperties().getExecutableProperties(method);
+				MethodTransferProperties transfermethod = getPropertiesCheckClosed(variables)
+						.getExecutableProperties(method);
 				Object[] args = readMethodParameters(variables, in);
 
-				requestHandler.addResponse(dispatchid,
+				boolean responseadded = requestHandler.addResponse(dispatchid,
 						new MethodCallRedispatchResponse(reqid, invokeobject, transfermethod, variables, args));
+				checkRedispatchResponseAdded(responseadded);
 			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
 					| ServiceConfigurationError e) {
 				writeCommandExceptionResult(COMMAND_METHODRESULT_FAIL, reqid, e, false, 0);
@@ -2684,6 +2700,20 @@ final class RMIStream implements Closeable {
 		} finally {
 			gcaction.decreasePendingRequestCount();
 		}
+	}
+
+	private static void checkRedispatchResponseAdded(boolean responseadded) {
+		if (!responseadded) {
+			throw new RMICallFailedException("RMI redispatch call site is no longer available.");
+		}
+	}
+
+	private static RMITransferPropertiesHolder getPropertiesCheckClosed(RMIVariables variables) {
+		RMITransferPropertiesHolder properties = variables.getProperties();
+		if (properties == null) {
+			throw new RMICallFailedException("Variables is closed.");
+		}
+		return properties;
 	}
 
 	private static Object readMethodInvokeObject(RMIVariables variables, int localid) {

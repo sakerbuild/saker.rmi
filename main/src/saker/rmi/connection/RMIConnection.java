@@ -46,7 +46,6 @@ import saker.util.ConcurrentPrependAccumulator;
 import saker.util.ImmutableUtils;
 import saker.util.ObjectUtils;
 import saker.util.classloader.ClassLoaderResolver;
-import saker.util.function.Functionals;
 import saker.util.io.DataOutputUnsyncByteArrayOutputStream;
 import saker.util.io.IOUtils;
 import saker.util.io.StreamPair;
@@ -142,6 +141,9 @@ public final class RMIConnection implements AutoCloseable {
 	private static final AtomicReferenceFieldUpdater<RMIConnection, Thread[]> ARFU_exitWaitThreads = AtomicReferenceFieldUpdater
 			.newUpdater(RMIConnection.class, Thread[].class, "exitWaitThreads");
 
+	private static final AtomicIntegerFieldUpdater<RMIConnection> AIFU_requestIdCounter = AtomicIntegerFieldUpdater
+			.newUpdater(RMIConnection.class, "requestIdCounter");
+
 	private static final Thread[] EXIT_WAIT_THREADS_MARKER_EXITED = {};
 
 	private final List<RMIStream> allStreams = new ArrayList<>();
@@ -178,7 +180,8 @@ public final class RMIConnection implements AutoCloseable {
 	private Collection<IOErrorListener> errorListeners = ObjectUtils.newIdentityHashSet();
 	private Collection<CloseListener> closeListeners = ObjectUtils.newIdentityHashSet();
 
-	private final RequestHandler requestHandler = new RequestHandler();
+	@SuppressWarnings("unused")
+	private volatile int requestIdCounter;
 
 	@SuppressWarnings("unused") // used through its atomic field updater
 	private volatile int offeredStreamTaskCount;
@@ -226,6 +229,10 @@ public final class RMIConnection implements AutoCloseable {
 
 	boolean isCustomExecutor() {
 		return this.taskExecutor != null;
+	}
+	
+	int getNextRequestId() {
+		return AIFU_requestIdCounter.incrementAndGet(this);
 	}
 
 	private void initTaskFields(RMIOptions options) {
@@ -436,7 +443,7 @@ public final class RMIConnection implements AutoCloseable {
 		// so the closing procedure is correct)
 		//XXX there's still a hazardous state, as getVariablesByLocalId() still returns this variables
 		//    so the other endpoint still could use this, but it is unlikely
-		//    anyway, event in that case, the variables will still be auto-closed when the last requets finishes on it
+		//    anyway, event in that case, the variables will still be auto-closed when the last request finishes on it
 		boolean aborting;
 		stateModifyLock.lock();
 		try {
@@ -813,10 +820,6 @@ public final class RMIConnection implements AutoCloseable {
 		s.interrupt();
 	}
 
-	RequestHandler getRequestHandler() {
-		return requestHandler;
-	}
-
 	void finishNewConnectionSetup(RMIStream stream) throws RMIRuntimeException, IOException {
 		addStream(stream);
 	}
@@ -905,12 +908,6 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	private void handleNoMoreRunningStreamTasks() {
-		//this was the last stream task to run
-		//stream reading tasks have already exited (or this was it)
-		//no streams running -> no more requests will be added
-		//close the request handler as it will not receive responses anymore
-		requestHandler.close();
-
 		//unpark the possibly waiting threads
 		Thread[] threads = ARFU_exitWaitThreads.getAndSet(this, EXIT_WAIT_THREADS_MARKER_EXITED);
 		if (threads == EXIT_WAIT_THREADS_MARKER_EXITED) {
@@ -1320,10 +1317,6 @@ public final class RMIConnection implements AutoCloseable {
 			} finally {
 				stateModifyLock.unlock();
 			}
-		}
-		if (onerror) {
-			//close down pending requests
-			requestHandler.close();
 		}
 		//use a copy collection to be able to remove from the real collection while the variables are closing
 		List<RMIVariables> vars = ImmutableUtils.makeImmutableList(variablesByLocalId.values());

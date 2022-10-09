@@ -201,4 +201,8 @@ public class RMITestUtil {
 		System.arraycopy(ORIGINAL_COMMAND_HANDLERS, 0, RMIStream.COMMAND_HANDLERS, 0, ORIGINAL_COMMAND_HANDLERS.length);
 	}
 
+	public static void closeRMIStreamInput(RMIVariables vars) throws IOException {
+		vars.getStream().blockIn.close();
+	}
+
 }
