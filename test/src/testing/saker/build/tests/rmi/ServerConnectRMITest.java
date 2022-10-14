@@ -15,9 +15,7 @@
  */
 package testing.saker.build.tests.rmi;
 
-import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
-import java.net.Socket;
 import java.util.Map;
 
 import saker.rmi.connection.RMIConnection;
@@ -178,20 +176,6 @@ public class ServerConnectRMITest extends SakerTestCase {
 			assertEquals(s.f("x"), "xx");
 		}
 		return connection;
-	}
-
-	private static final class RMIServerWithOptions extends RMIServer {
-		private final RMIOptions options;
-
-		private RMIServerWithOptions(RMIOptions options) throws IOException {
-			this.options = options;
-		}
-
-		@Override
-		protected RMIOptions getRMIOptionsForAcceptedConnection(Socket acceptedsocket, int protocolversion)
-				throws IOException, RuntimeException {
-			return options;
-		}
 	}
 
 }
