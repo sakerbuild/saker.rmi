@@ -184,6 +184,11 @@ public class RMITestUtil {
 			public boolean isPreventGarbageCollection() {
 				return originalcommand.isPreventGarbageCollection();
 			}
+
+			@Override
+			public boolean isPendingResponse() {
+				return originalcommand.isPendingResponse();
+			}
 		};
 	}
 
@@ -203,6 +208,10 @@ public class RMITestUtil {
 
 	public static void closeRMIStreamInput(RMIVariables vars) throws IOException {
 		vars.getStream().blockIn.close();
+	}
+
+	public static void closeRMIOutputInput(RMIVariables vars) throws IOException {
+		vars.getStream().blockOut.close();
 	}
 
 }

@@ -6,6 +6,7 @@ import java.io.PrintStream;
 import saker.rmi.connection.RMIConnection.IOErrorListener;
 import saker.rmi.connection.RMITestUtil;
 import saker.rmi.exception.RMIIOFailureException;
+import saker.util.io.DataInputUnsyncByteArrayInputStream;
 import saker.util.io.function.IOConsumer;
 import testing.saker.SakerTest;
 
@@ -49,7 +50,17 @@ public class IOErrorTest extends BaseVariablesRMITestCase {
 			RMITestUtil.replaceCommandHandler(COMMAND_METHODRESULT, new IOConsumer<Object[]>() {
 				@Override
 				public void accept(Object[] args) throws IOException {
-					throw new IOException("read fail");
+					//replace the input of the method handler instad of directly throwing here
+					//so the request handler pending request counter is properly decremented
+					//by the original handler
+					Object[] nargs = args.clone();
+					//the index is 1
+					//args:
+					// RMIStream
+					// DataInputUnsyncByteArrayInputStream
+					// ReferencesReleasedAction
+					nargs[1] = new DataInputUnsyncByteArrayInputStream(new byte[] { 1 });
+					RMITestUtil.callOriginalCommandHandler(COMMAND_METHODRESULT, nargs);
 				}
 			});
 
