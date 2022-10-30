@@ -29,11 +29,10 @@ import saker.util.io.ByteSource;
 import saker.util.io.DataInputUnsyncByteArrayInputStream;
 import saker.util.io.ReadWriteBufferOutputStream;
 import saker.util.io.function.IOConsumer;
-import saker.util.io.function.IOTriFunction;
 
 public class RMITestUtil {
 	private static final RMIStream.CommandHandler[] ORIGINAL_COMMAND_HANDLERS = RMIStream.COMMAND_HANDLERS.clone();
-	private static final IOTriFunction<RMIStream, RMIVariables, DataInputUnsyncByteArrayInputStream, Object>[] ORIGINAL_OBJECT_READERS = RMIStream.OBJECT_READERS
+	private static final RMIStream.RMIObjectReaderFunction<?>[] ORIGINAL_OBJECT_READERS = RMIStream.OBJECT_READERS
 			.clone();
 
 	public static RMIConnection[] createPipedConnection() throws Exception {
@@ -60,10 +59,15 @@ public class RMITestUtil {
 
 	public static RMIConnection[] createPipedConnection(RMIOptions firstoptions, RMIOptions secondoptions)
 			throws Exception {
+		return createPipedConnection(firstoptions, secondoptions, RMIConnection.PROTOCOL_VERSION_LATEST);
+	}
+
+	public static RMIConnection[] createPipedConnection(RMIOptions firstoptions, RMIOptions secondoptions,
+			short protocolversion) throws Exception, IOException {
 		RMIConnection[] result = new RMIConnection[2];
 
-		result[0] = new RMIConnection(firstoptions, RMIConnection.PROTOCOL_VERSION_LATEST);
-		result[1] = new RMIConnection(secondoptions, RMIConnection.PROTOCOL_VERSION_LATEST);
+		result[0] = new RMIConnection(firstoptions, protocolversion);
+		result[1] = new RMIConnection(secondoptions, protocolversion);
 
 		RMIStream[] initstreams = createPipedStreams(result);
 
@@ -164,7 +168,7 @@ public class RMITestUtil {
 		return RMIStream.getPublicNonAssignableInterfaces(c, MethodHandles.lookup(), null);
 	}
 
-	public static IOTriFunction<?, RMIVariables, DataInputUnsyncByteArrayInputStream, Object>[] getObjectReaders() {
+	public static RMIStream.RMIObjectReaderFunction<?>[] getObjectReaders() {
 		return RMIStream.OBJECT_READERS;
 	}
 

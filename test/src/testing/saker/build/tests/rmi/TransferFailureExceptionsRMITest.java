@@ -131,6 +131,7 @@ public class TransferFailureExceptionsRMITest extends BaseVariablesRMITestCase {
 			m.invoke(s, new NonReadableExternalizable());
 			fail();
 		} catch (InvocationTargetException e) {
+			e.printStackTrace();
 			Class<? extends Throwable> causeclass = e.getCause().getClass();
 			assertTrue(causeclass == RMIObjectTransferFailureException.class
 					|| causeclass == RMICallFailedException.class);
@@ -139,29 +140,33 @@ public class TransferFailureExceptionsRMITest extends BaseVariablesRMITestCase {
 			m.invoke(s, new NonWriteableExternalizable());
 			fail();
 		} catch (InvocationTargetException e) {
+			e.printStackTrace();
 			Class<? extends Throwable> causeclass = e.getCause().getClass();
-			assertTrue(causeclass == RMIObjectTransferFailureException.class);
+			assertEquals(causeclass, RMIObjectTransferFailureException.class);
 		}
 		try {
 			stubclass.getMethod("customException").invoke(s);
 			fail();
 		} catch (InvocationTargetException e) {
+			e.printStackTrace();
 			Class<? extends Throwable> causeclass = e.getCause().getClass();
-			assertTrue(causeclass == SUBCLASSLOADER.loadClass(CustomException.class.getName()));
+			assertEquals(causeclass, SUBCLASSLOADER.loadClass(CustomException.class.getName()));
 		}
 		try {
 			stubclass.getMethod("nonWritableCustomException").invoke(s);
 			fail();
 		} catch (InvocationTargetException e) {
+			e.printStackTrace();
 			Class<? extends Throwable> causeclass = e.getCause().getClass();
-			assertTrue(causeclass == RMICallFailedException.class);
+			assertEquals(causeclass, RMICallFailedException.class);
 		}
 		try {
 			stubclass.getMethod("nonReadableCustomException").invoke(s);
 			fail();
 		} catch (InvocationTargetException e) {
+			e.printStackTrace();
 			Class<? extends Throwable> causeclass = e.getCause().getClass();
-			assertTrue(causeclass == RMICallFailedException.class);
+			assertEquals(causeclass, RMICallFailedException.class);
 		}
 	}
 

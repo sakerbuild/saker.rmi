@@ -208,6 +208,11 @@ public class RMITransferTest extends BaseVariablesRMITestCase {
 		public default MyWrappable getWrappable() {
 			return new MyWrappable("val");
 		}
+
+		@RMIWrap(MissingConstructorRMIWrapper.class)
+		public default Object getMissingConstructorRMIWrapper() {
+			return new MySerializable("123");
+		}
 	}
 
 	public static class Impl implements Stub {
@@ -333,6 +338,36 @@ public class RMITransferTest extends BaseVariablesRMITestCase {
 		}
 	}
 
+	/**
+	 * No constructor that accepts an object.
+	 */
+	public static class MissingConstructorRMIWrapper implements RMIWrapper {
+		private Object object;
+
+		public MissingConstructorRMIWrapper() {
+		}
+
+		@Override
+		public void writeWrapped(RMIObjectOutput out) throws IOException {
+			out.writeObject(object);
+		}
+
+		@Override
+		public void readWrapped(RMIObjectInput in) throws IOException, ClassNotFoundException {
+			object = in.readObject();
+		}
+
+		@Override
+		public Object resolveWrapped() {
+			return object;
+		}
+
+		@Override
+		public Object getWrappedObject() {
+			return null;
+		}
+	}
+
 	@Override
 	protected void runVariablesTestImpl() throws AssertionError {
 		try {
@@ -380,6 +415,8 @@ public class RMITransferTest extends BaseVariablesRMITestCase {
 			assertTrue(RMIConnection.isRemoteObject(s.externalizableItf()));
 
 			assertEquals(s.getWrappable().v, "val_wrapped");
+
+			assertException(RMICallFailedException.class, () -> s.getMissingConstructorRMIWrapper());
 		} catch (RMICallFailedException | InvocationTargetException | NoSuchMethodException e) {
 			throw fail(e);
 		}

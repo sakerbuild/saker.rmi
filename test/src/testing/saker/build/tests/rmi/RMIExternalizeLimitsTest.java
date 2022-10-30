@@ -21,6 +21,8 @@ import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
 
+import saker.rmi.connection.RMIConnection;
+import saker.rmi.connection.RMIOptions;
 import saker.rmi.exception.RMICallFailedException;
 import testing.saker.SakerTest;
 
@@ -161,6 +163,13 @@ public class RMIExternalizeLimitsTest extends BaseVariablesRMITestCase {
 		assertEquals(stringSet, "dummy2");
 
 		assertException(RMICallFailedException.class, () -> s.test(new NotFullyReadBase(5, 6), "dummy3"));
+	}
+
+	@Override
+	protected RMIConnection[] createConnections(RMIOptions baseoptions) throws Exception {
+		// do the boundary check so exception is thrown when the externalizable bytes is not fully read
+		baseoptions.objectTransferByteChecks(true);
+		return super.createConnections(baseoptions);
 	}
 
 }
