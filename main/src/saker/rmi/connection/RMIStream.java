@@ -155,8 +155,9 @@ final class RMIStream implements Closeable {
 	private static final short OBJECT_FIELD = 29;
 	//since protocol version 2
 	private static final short OBJECT_WRAPPER2 = 30;
+	private static final short OBJECT_SERIALIZED2 = 31;
 
-	private static final short OBJECT_READER_END_VALUE = 31;
+	private static final short OBJECT_READER_END_VALUE = 32;
 
 	private static final short CLASS_DETAILS = 0;
 	private static final short CLASS_INDEX = 1;
@@ -206,6 +207,7 @@ final class RMIStream implements Closeable {
 		OBJECT_READERS[OBJECT_SERIALIZED] = (s, vars, in) -> s.readSerializedObject(in);
 		OBJECT_READERS[OBJECT_WRAPPER] = RMIStream::readWrappedObject;
 		OBJECT_READERS[OBJECT_WRAPPER2] = RMIStream::readWrapped2Object;
+		OBJECT_READERS[OBJECT_SERIALIZED2] = (s, vars, in) -> s.readSerialized2Object(in);
 
 		OBJECT_READERS[OBJECT_BYTE_ARRAY] = (s, vars, in) -> readObjectByteArray(in);
 		OBJECT_READERS[OBJECT_SHORT_ARRAY] = (s, vars, in) -> readObjectShortArray(in);
@@ -1417,7 +1419,7 @@ final class RMIStream implements Closeable {
 				return;
 			}
 		}
-		writeSerializedObjectFromStream(obj, out);
+		writeSerializedObject(obj, out);
 	}
 
 	void writeWrappedObjectFromStream(RMIVariables variables, Object obj, Class<? extends RMIWrapper> wrapperclass,
@@ -1455,23 +1457,26 @@ final class RMIStream implements Closeable {
 			writeObjectEnumImpl(out, objclass, ((Enum<?>) obj).name());
 			return;
 		}
-		out.writeShort(OBJECT_SERIALIZED);
-		try (ObjectOutputStream oos = new RMISerializeObjectOutputStream(out, connection)) {
-			oos.writeObject(obj);
-		}
-	}
 
-	private void writeSerializedObjectFromStream(Object obj, DataOutputUnsyncByteArrayOutputStream out)
-			throws IOException {
-		Class<? extends Object> objclass = obj.getClass();
-		if (ReflectUtils.isEnumOrEnumAnonymous(objclass)) {
-			writeObjectEnumImpl(out, objclass, ((Enum<?>) obj).name());
-			return;
+		if (connection.getProtocolVersion() >= RMIConnection.PROTOCOL_VERSION_2) {
+			//protocol includes the number of bytes written
+			out.writeShort(OBJECT_SERIALIZED2);
+
+			int sizeoffset = out.size();
+			out.writeInt(0);
+			try {
+				try (ObjectOutputStream oos = new RMISerializeObjectOutputStream(out, connection)) {
+					oos.writeObject(obj);
+				}
+			} finally {
+				out.replaceInt(out.size() - sizeoffset - 4, sizeoffset);
+			}
+		} else {
+			out.writeShort(OBJECT_SERIALIZED);
+			try (ObjectOutputStream oos = new RMISerializeObjectOutputStream(out, connection)) {
+				oos.writeObject(obj);
+			}
 		}
-		out.writeShort(OBJECT_SERIALIZED);
-		try (ObjectOutputStream oos = new RMISerializeObjectOutputStream(out, connection)) {
-			oos.writeObject(obj);
-		} // the exceptions are relayed to the caller
 	}
 
 	private Object readSerializedObject(DataInputUnsyncByteArrayInputStream in)
@@ -1481,6 +1486,30 @@ final class RMIStream implements Closeable {
 				connection)) {
 			return ois.readObject();
 		}
+	}
+
+	private Object readSerialized2Object(DataInputUnsyncByteArrayInputStream in)
+			throws IOException, ClassNotFoundException {
+		//TODO handle serialization security-wise
+		int bytecount = in.readInt();
+		ByteArrayRegion inregion = in.toByteArrayRegion();
+		DataInputUnsyncByteArrayInputStream limitreader = new DataInputUnsyncByteArrayInputStream(inregion.getArray(),
+				inregion.getOffset(), bytecount);
+		//skip the bytes after constructing the reader for the externalizable
+		in.skipBytes(bytecount);
+
+		Object result;
+		try (ObjectInputStream ois = new RMISerializeObjectInputStream(limitreader, connection)) {
+			result = ois.readObject();
+		}
+		if (connection.isObjectTransferByteChecks()) {
+			int avail = limitreader.available();
+			if (avail > 0) {
+				throw new RMIObjectTransferFailureException("Serializable stream wasn't read fully by "
+						+ ObjectUtils.classNameOf(result) + ". (Remaining " + avail + " bytes)");
+			}
+		}
+		return result;
 	}
 
 	private RMIObjectInput getObjectInputForVariables(RMIVariables variables, DataInputUnsyncByteArrayInputStream in) {

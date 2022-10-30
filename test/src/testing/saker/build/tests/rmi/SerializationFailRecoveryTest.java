@@ -1,5 +1,6 @@
 package testing.saker.build.tests.rmi;
 
+import java.io.EOFException;
 import java.io.Externalizable;
 import java.io.IOException;
 import java.io.NotSerializableException;
@@ -51,7 +52,15 @@ public class SerializationFailRecoveryTest extends BaseVariablesRMITestCase {
 		}
 	}
 
-	public static class FailExternalizable implements Externalizable {
+	private static class FailRuntimeException extends RuntimeException {
+		private static final long serialVersionUID = 1L;
+
+		public FailRuntimeException(String message) {
+			super(message);
+		}
+	}
+
+	public static class FailIOExternalizable implements Externalizable {
 		private static final long serialVersionUID = 1L;
 
 		@Override
@@ -63,7 +72,36 @@ public class SerializationFailRecoveryTest extends BaseVariablesRMITestCase {
 		public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
 			throw new FailIOException("read");
 		}
+	}
 
+	public static class FailRuntimeExternalizable implements Externalizable {
+		private static final long serialVersionUID = 1L;
+
+		@Override
+		public void writeExternal(ObjectOutput out) throws IOException {
+			throw new FailRuntimeException("write");
+		}
+
+		@Override
+		public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
+			throw new FailRuntimeException("read");
+		}
+	}
+
+	public static class FailRuntimeWriteExternalizable implements Externalizable {
+		private static final long serialVersionUID = 1L;
+
+		private Object value;
+
+		@Override
+		public void writeExternal(ObjectOutput out) throws IOException {
+			throw new FailRuntimeException("write");
+		}
+
+		@Override
+		public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
+			value = in.readObject();
+		}
 	}
 
 	public static class MyExternalizable implements Externalizable {
@@ -71,13 +109,17 @@ public class SerializationFailRecoveryTest extends BaseVariablesRMITestCase {
 
 		private Object object;
 		private Object next;
+		private Object third;
+		private Object fourth;
 
 		public MyExternalizable() {
 		}
 
 		public MyExternalizable(Object object) {
 			this.object = object;
-			next = new FailExternalizable();
+			next = new FailIOExternalizable();
+			third = new FailRuntimeExternalizable();
+			fourth = new FailRuntimeWriteExternalizable();
 		}
 
 		@Override
@@ -87,14 +129,28 @@ public class SerializationFailRecoveryTest extends BaseVariablesRMITestCase {
 				out.writeObject(object);
 			} catch (NotSerializableException e) {
 				System.out.println("SerializationFailRecoveryTest.MyExternalizable.writeExternal(): " + e);
-				out.writeObject("xyz");
+				out.writeObject("1");
 			}
 			try {
 				out.writeObject(next);
 			} catch (FailIOException e) {
 				// expected
 				System.out.println("SerializationFailRecoveryTest.MyExternalizable.writeExternal(): next: " + e);
-				out.writeObject("ijk");
+				out.writeObject("2");
+			}
+			try {
+				out.writeObject(third);
+			} catch (FailRuntimeException e) {
+				// expected
+				System.out.println("SerializationFailRecoveryTest.MyExternalizable.writeExternal(): third: " + e);
+				out.writeObject("3");
+			}
+			try {
+				out.writeObject(fourth);
+			} catch (FailRuntimeException e) {
+				// expected
+				System.out.println("SerializationFailRecoveryTest.MyExternalizable.writeExternal(): fourth: " + e);
+				out.writeObject("4");
 			}
 		}
 
@@ -120,6 +176,25 @@ public class SerializationFailRecoveryTest extends BaseVariablesRMITestCase {
 				assertEquals(e.getMessage(), "read");
 				Object readafter = in.readObject();
 				next = FailIOException.class.getName() + readafter;
+			}
+			try {
+				third = in.readObject();
+			} catch (FailRuntimeException e) {
+				//expected
+				System.out.println("Got " + e);
+
+				assertEquals(e.getMessage(), "read");
+				Object readafter = in.readObject();
+				third = FailRuntimeException.class.getName() + readafter;
+			}
+			try {
+				fourth = in.readObject();
+			} catch (EOFException e) {
+				//expected
+				System.out.println("Got " + e);
+
+				Object readafter = in.readObject();
+				fourth = EOFException.class.getName() + readafter;
 			}
 		}
 
@@ -171,14 +246,31 @@ public class SerializationFailRecoveryTest extends BaseVariablesRMITestCase {
 			} catch (IOException e) {
 				System.out.println("SerializationFailRecoveryTest.RecoveryRMIWrapper.writeWrapped(): " + e);
 				//writing after an exception should succeed
-				out.writeObject("abc");
+				out.writeObject("1");
 			}
 
 			try {
 				out.writeWrappedObject(new Object(), FailWrapper.class);
 			} catch (FailIOException e) {
 				System.out.println("SerializationFailRecoveryTest.RecoveryRMIWrapper.writeWrapped() failer: " + e);
-				out.writeObject("efg");
+				out.writeObject("2");
+			}
+
+			try {
+				out.writeSerializedObject(new FailRuntimeExternalizable());
+			} catch (FailRuntimeException e) {
+				System.out.println(
+						"SerializationFailRecoveryTest.RecoveryRMIWrapper.writeWrapped() FailRuntimeExternalizable: "
+								+ e);
+				out.writeObject("3");
+			}
+			try {
+				out.writeSerializedObject(new FailRuntimeWriteExternalizable());
+			} catch (FailRuntimeException e) {
+				System.out.println(
+						"SerializationFailRecoveryTest.RecoveryRMIWrapper.writeWrapped() FailRuntimeWriteExternalizable: "
+								+ e);
+				out.writeObject("4");
 			}
 		}
 
@@ -200,7 +292,23 @@ public class SerializationFailRecoveryTest extends BaseVariablesRMITestCase {
 				System.out.println("Got failer: " + e);
 
 				Object readafter = in.readObject();
-				object = object + FailIOException.class.getName() + readafter;
+				object = object + "\n" + FailIOException.class.getName() + readafter;
+			}
+			try {
+				in.readObject();
+			} catch (FailRuntimeException e) {
+				System.out.println("Got FailRuntimeExternalizable: " + e);
+
+				Object readafter = in.readObject();
+				object = object + "\n" + FailRuntimeException.class.getName() + readafter;
+			}
+			try {
+				in.readObject();
+			} catch (IOException e) {
+				System.out.println("Got IOException: " + e);
+
+				Object readafter = in.readObject();
+				object = object + "\n" + IOException.class.getName() + readafter;
 			}
 		}
 
@@ -223,11 +331,14 @@ public class SerializationFailRecoveryTest extends BaseVariablesRMITestCase {
 
 		//not serializable
 		i.obj = new Object();
-		assertEquals(s.get(), WriteAbortedException.class.getName() + "abc" + FailIOException.class.getName() + "efg");
+		assertEquals(s.get(), WriteAbortedException.class.getName() + "1" + "\n" + FailIOException.class.getName() + "2"
+				+ "\n" + FailRuntimeException.class.getName() + "3" + "\n" + IOException.class.getName() + "4");
 
 		MyExternalizable gotext = s.getExternalizable();
-		assertEquals(gotext.object, WriteAbortedException.class.getName() + "xyz");
-		assertEquals(gotext.next, FailIOException.class.getName() + "ijk");
+		assertEquals(gotext.object, WriteAbortedException.class.getName() + "1");
+		assertEquals(gotext.next, FailIOException.class.getName() + "2");
+		assertEquals(gotext.third, FailRuntimeException.class.getName() + "3");
+		assertEquals(gotext.fourth, EOFException.class.getName() + "4");
 	}
 
 }

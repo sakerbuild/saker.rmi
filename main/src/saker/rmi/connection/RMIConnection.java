@@ -96,8 +96,8 @@ public final class RMIConnection implements AutoCloseable {
 	/**
 	 * Version 2.
 	 * <p>
-	 * Modifies the object protocol to include the byte count of the transferred data in case of serialiazing wrapped
-	 * objects.
+	 * Modifies the object protocol to include the byte count of the transferred data in case of serializing wrapped
+	 * objects and serializable objects.
 	 * 
 	 * @since saker.rmi 0.8.3
 	 */
