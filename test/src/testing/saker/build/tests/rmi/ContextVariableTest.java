@@ -15,6 +15,8 @@
  */
 package testing.saker.build.tests.rmi;
 
+import saker.rmi.annot.invoke.RMIForbidden;
+import saker.rmi.exception.RMICallForbiddenException;
 import testing.saker.SakerTest;
 
 @SakerTest
@@ -22,6 +24,11 @@ public class ContextVariableTest extends BaseVariablesRMITestCase {
 	public interface Stub {
 		public default int f() {
 			return 123;
+		}
+
+		@RMIForbidden
+		public default int forbidden(int i) {
+			return i * i;
 		}
 	}
 
@@ -41,6 +48,8 @@ public class ContextVariableTest extends BaseVariablesRMITestCase {
 		assertEquals(a.f(), 123);
 		assertIdentityEquals(a, b);
 		assertIdentityEquals(a, s2);
+
+		assertException(RMICallForbiddenException.class, () -> a.forbidden(4));
 	}
 
 }
