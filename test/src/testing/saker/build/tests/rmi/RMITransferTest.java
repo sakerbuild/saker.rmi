@@ -191,6 +191,10 @@ public class RMITransferTest extends BaseVariablesRMITestCase {
 
 		public Field field(Field f);
 
+		public default String passThroughString(String s) {
+			return s;
+		}
+
 		public default MyExternalizable myExternalizable() {
 			return new MyExternalizable("test");
 		}
@@ -212,6 +216,10 @@ public class RMITransferTest extends BaseVariablesRMITestCase {
 		@RMIWrap(MissingConstructorRMIWrapper.class)
 		public default Object getMissingConstructorRMIWrapper() {
 			return new MySerializable("123");
+		}
+
+		public default void redispatch(Runnable run) {
+			run.run();
 		}
 	}
 
@@ -369,57 +377,75 @@ public class RMITransferTest extends BaseVariablesRMITestCase {
 	}
 
 	@Override
-	protected void runVariablesTestImpl() throws AssertionError {
-		try {
-			Stub s = (Stub) clientVariables.newRemoteInstance(Impl.class);
+	protected void runVariablesTestImpl() throws Exception {
+		Stub s = (Stub) clientVariables.newRemoteInstance(Impl.class);
 
-			assertEquals(s.f(true), true);
-			assertEquals(s.f((byte) 1), (byte) 1);
-			assertEquals(s.f((short) 1), (short) 1);
-			assertEquals(s.f(1), 1);
-			assertEquals(s.f((long) 1), (long) 1);
-			assertEquals(s.f((float) 1), (float) 1);
-			assertEquals(s.f((double) 1), (double) 1);
-			assertEquals(s.f((char) 1), (char) 1);
-			assertEquals(s.f("1"), "1");
+		assertEquals(s.f(true), true);
+		assertEquals(s.f((byte) 1), (byte) 1);
+		assertEquals(s.f((short) 1), (short) 1);
+		assertEquals(s.f(1), 1);
+		assertEquals(s.f((long) 1), (long) 1);
+		assertEquals(s.f((float) 1), (float) 1);
+		assertEquals(s.f((double) 1), (double) 1);
+		assertEquals(s.f((char) 1), (char) 1);
+		assertEquals(s.f("1"), "1");
 
-			assertEquals(s.f(new byte[] { 1 }), new byte[] { 1 });
-			assertEquals(s.f(new short[] { 1 }), new short[] { 1 });
-			assertEquals(s.f(new int[] { 1 }), new int[] { 1 });
-			assertEquals(s.f(new long[] { 1 }), new long[] { 1 });
-			assertEquals(s.f(new float[] { 1 }), new float[] { 1 });
-			assertEquals(s.f(new double[] { 1 }), new double[] { 1 });
-			assertEquals(s.f(new char[] { 1 }), new char[] { 1 });
-			assertEquals(s.f(new boolean[] { true }), new boolean[] { true });
+		assertEquals(s.f(new byte[] { 1 }), new byte[] { 1 });
+		assertEquals(s.f(new short[] { 1 }), new short[] { 1 });
+		assertEquals(s.f(new int[] { 1 }), new int[] { 1 });
+		assertEquals(s.f(new long[] { 1 }), new long[] { 1 });
+		assertEquals(s.f(new float[] { 1 }), new float[] { 1 });
+		assertEquals(s.f(new double[] { 1 }), new double[] { 1 });
+		assertEquals(s.f(new char[] { 1 }), new char[] { 1 });
+		assertEquals(s.f(new boolean[] { true }), new boolean[] { true });
 
-			assertEquals(s.f(new String[] { "s" }), new String[] { "s" });
+		assertEquals(s.f(new String[] { "s" }), new String[] { "s" });
 
-			Runnable r = () -> {
-			};
-			assertTrue(s.defaultRemote(r) == r);
+		Runnable r = () -> {
+		};
+		assertTrue(s.defaultRemote(r) == r);
 
-			Class<RMITransferTest> clazz = RMITransferTest.class;
-			Constructor<RMITransferTest> constr = RMITransferTest.class.getConstructor();
-			Method meth = RMITransferTest.class.getMethods()[0];
-			ClassLoader cl = RMITransferTest.class.getClassLoader();
-			Field f = RMITransferTest.class.getFields()[0];
+		Class<RMITransferTest> clazz = RMITransferTest.class;
+		Constructor<RMITransferTest> constr = RMITransferTest.class.getConstructor();
+		Method meth = RMITransferTest.class.getMethods()[0];
+		ClassLoader cl = RMITransferTest.class.getClassLoader();
+		Field f = RMITransferTest.class.getFields()[0];
 
-			assertIdentityEquals(clazz, s.clazz(clazz));
-			assertIdentityEquals(cl, s.cl(cl));
-			assertEquals(constr, s.constructor(constr));
-			assertEquals(meth, s.method(meth));
-			assertEquals(f, s.field(f));
+		assertIdentityEquals(clazz, s.clazz(clazz));
+		assertIdentityEquals(cl, s.cl(cl));
+		assertEquals(constr, s.constructor(constr));
+		assertEquals(meth, s.method(meth));
+		assertEquals(f, s.field(f));
 
-			assertEquals(s.myExternalizable().value, "test");
-			assertEquals(s.serializable().value, "test");
-			assertTrue(RMIConnection.isRemoteObject(s.externalizableItf()));
+		assertEquals(s.myExternalizable().value, "test");
+		assertEquals(s.serializable().value, "test");
+		assertTrue(RMIConnection.isRemoteObject(s.externalizableItf()));
 
-			assertEquals(s.getWrappable().v, "val_wrapped");
+		assertEquals(s.getWrappable().v, "val_wrapped");
 
-			assertException(RMICallFailedException.class, () -> s.getMissingConstructorRMIWrapper());
-		} catch (RMICallFailedException | InvocationTargetException | NoSuchMethodException e) {
-			throw fail(e);
+		assertException(RMICallFailedException.class, () -> s.getMissingConstructorRMIWrapper());
+
+		//there was a bug that closed down the RMI connection after the above missing constructor RMI wrapper check
+		//so check again that it still works
+		assertEquals(s.passThroughString("abc"), "abc");
+
+		{
+			RuntimeException thrownexc = assertException(RuntimeException.class, () -> s.redispatch(() -> {
+				throw new RuntimeException("dummy");
+			}));
+			try {
+				assertEquals(thrownexc.getClass(), RuntimeException.class);
+				assertEquals(thrownexc.getMessage(), "dummy");
+			} catch (Throwable e) {
+				e.addSuppressed(thrownexc);
+				throw e;
+			}
 		}
+
+		assertException(RMICallFailedException.class, () -> s.redispatch(() -> s.getMissingConstructorRMIWrapper()));
+
+		//check again that connection still works
+		assertEquals(s.passThroughString("xyz"), "xyz");
 	}
 
 }
