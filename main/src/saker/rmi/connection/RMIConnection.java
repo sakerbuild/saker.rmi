@@ -877,6 +877,17 @@ public final class RMIConnection implements AutoCloseable {
 		}
 	}
 
+	private boolean removeVariablesLocked(RMIVariables variables, int identifier) {
+		boolean removed = this.variablesByLocalId.remove(identifier, variables);
+		if (!removed) {
+			return false;
+		}
+		if (variables instanceof NamedRMIVariables) {
+			this.variablesByNames.remove(((NamedRMIVariables) variables).getName(), variables);
+		}
+		return removed;
+	}
+
 	/**
 	 * Locked on stateModifyLock.
 	 * 
@@ -885,12 +896,9 @@ public final class RMIConnection implements AutoCloseable {
 	 *            The local identifier of the variables.
 	 */
 	private void closeVariablesLocked(RMIVariables variables, int identifier) {
-		boolean removed = this.variablesByLocalId.remove(identifier, variables);
+		boolean removed = removeVariablesLocked(variables, identifier);
 		if (!removed) {
 			return;
-		}
-		if (variables instanceof NamedRMIVariables) {
-			this.variablesByNames.remove(((NamedRMIVariables) variables).getName(), variables);
 		}
 
 		try {

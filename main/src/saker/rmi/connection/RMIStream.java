@@ -125,8 +125,9 @@ final class RMIStream implements Closeable {
 	private static final short COMMAND_METHODCALL_CONTEXTVAR = 29;
 	private static final short COMMAND_METHODCALL_CONTEXTVAR_REDISPATCH = 30;
 	private static final short COMMAND_METHODCALL_CONTEXTVAR_NOT_FOUND = 31;
+	private static final short COMMAND_ASYNC_RESPONSE = 32;
 
-	private static final short COMMAND_END_VALUE = 32;
+	private static final short COMMAND_END_VALUE = 33;
 
 	private static final short OBJECT_NULL = 0;
 	private static final short OBJECT_BOOLEAN = 1;
@@ -317,6 +318,7 @@ final class RMIStream implements Closeable {
 		COMMAND_HANDLERS[COMMAND_METHODCALL_CONTEXTVAR] = (GarbageCollectionPreventingCommandHandler) RMIStream::handleCommandContextVariableMethodCall;
 		COMMAND_HANDLERS[COMMAND_METHODCALL_CONTEXTVAR_REDISPATCH] = (PendingResponseGarbageCollectionPreventingCommandHandler) RMIStream::handleCommandContextVariableMethodCallRedispatch;
 		COMMAND_HANDLERS[COMMAND_METHODCALL_CONTEXTVAR_NOT_FOUND] = (PendingResponseSimpleCommandHandler) RMIStream::handleCommandContextVariableMethodCallVariableNotFound;
+		COMMAND_HANDLERS[COMMAND_ASYNC_RESPONSE] = (SimpleCommandHandler) RMIStream::handleCommandAsyncResponse;
 	}
 
 	interface RequestScopeHandler {
@@ -730,6 +732,61 @@ final class RMIStream implements Closeable {
 								currentaction.referencesReleased(vars, localid, count, nextaction);
 								continue block_read_loop;
 							}
+							case COMMAND_METHODCALL_ASYNC: {
+								//the async method call needs to be specially handled
+								//as it adds an ongoing request
+								//we need to add this request before we attempt to handle other commands
+								//so the variables and connection is not closed before the async call is started
+								//TODO this should be done generally, for other command as well, because
+								//     this race condition is present there too, but due to the usual use-case
+								//     of the lib, its not an issue currently.
+
+								RMIVariables variables = null;
+								int variablesid = 0;
+								try {
+									try {
+										variablesid = in.readInt();
+										variables = connection.getVariablesByLocalId(variablesid);
+									} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError
+											| AssertionError | ServiceConfigurationError e) {
+										//failed to read the variables
+										//ignoreable
+										//XXX should notify the user somehow
+
+										//just continue reading in this loop
+										continue block_read_loop;
+									}
+									if (variables == null) {
+										//just continue reading in this loop
+										continue block_read_loop;
+									}
+									try {
+										variables.addOngoingRequest();
+									} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError
+											| AssertionError | ServiceConfigurationError e) {
+										//maybe the variables got closed meanwhile
+										//XXX should notify the user somehow
+										//just continue reading in this loop
+										continue block_read_loop;
+									}
+									try {
+										ReferencesReleasedAction currentaction = this.gcAction;
+										currentaction.increasePendingRequestCount();
+
+										connection.offerStreamTask(this);
+
+										handleSpecialMethodCallAsync(variables, in, currentaction);
+									} finally {
+										variables.removeOngoingRequest();
+									}
+								} finally {
+									if (variablesid != 0 && connection.getProtocolVersion() >= 2) {
+										//write the async response so the caller knows its finished
+										writeCommandAsyncResponse(variablesid);
+									}
+								}
+								break;
+							}
 							default: {
 								CommandHandler commandhandler = getCommandHandler(command);
 								if (commandhandler == null) {
@@ -743,14 +800,21 @@ final class RMIStream implements Closeable {
 									} else {
 										currentaction = null;
 									}
-									if (commandhandler.isPendingResponse()) {
+									boolean pendingresponse = commandhandler.isPendingResponse();
+									if (pendingresponse) {
 										requestHandlerAddResponseCount();
 									}
 									try {
 										connection.offerStreamTask(this);
 									} catch (Throwable e) {
-										//remove the pending response if we failed to reach the command handling
-										requestHandlerRemoveResponseCount();
+										if (pendingresponse) {
+											//remove the pending response if we failed to reach the command handling
+											try {
+												requestHandlerRemoveResponseCount();
+											} catch (Throwable e2) {
+												e.addSuppressed(e2);
+											}
+										}
 										throw e;
 									}
 									commandhandler.accept(RMIStream.this, in, currentaction);
@@ -2807,6 +2871,42 @@ final class RMIStream implements Closeable {
 		}
 	}
 
+	private void handleSpecialMethodCallAsync(RMIVariables variables, DataInputUnsyncByteArrayInputStream in,
+			ReferencesReleasedAction gcaction) {
+		try {
+			Object invokeobject;
+			Object[] args;
+			Method method;
+			try {
+				int localid = in.readInt();
+				invokeobject = readMethodInvokeObject(variables, localid);
+				if (invokeobject == null && !connection.isAllowDirectRequests()) {
+					//forbidden to call static methods
+					//XXX should notify the user somehow
+					return;
+				}
+				method = readMethod(in, invokeobject);
+				//TODO check disallowing direct requests if the called method has a non-interface declaring class (or java.lang.Object)
+				if (((method.getModifiers() & Modifier.STATIC) == Modifier.STATIC)
+						&& !connection.isAllowDirectRequests()) {
+					//XXX should notify the user somehow
+					return;
+				}
+
+				args = readMethodParameters(variables, in);
+			} finally {
+				gcaction.decreasePendingRequestCount();
+			}
+			//release the action for garbage collection
+			gcaction = null;
+			ReflectUtils.invokeMethod(invokeobject, method, args);
+		} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
+				| ServiceConfigurationError e) {
+			//XXX should notify the user somehow
+			return;
+		}
+	}
+
 	private void handleCommandMethodCallAsync(DataInputUnsyncByteArrayInputStream in,
 			ReferencesReleasedAction gcaction) {
 		try {
@@ -3017,6 +3117,22 @@ final class RMIStream implements Closeable {
 		requestHandler.addResponse(reqid, new ContextVariableNotFoundResponse(varname));
 	}
 
+	private void handleCommandAsyncResponse(DataInputUnsyncByteArrayInputStream in) throws IOException {
+		RMIVariables vars = readVariablesImpl(in);
+		if (vars != null) {
+			vars.removeOngoingRequest();
+		}
+	}
+
+	private void writeCommandAsyncResponse(int variablesid) throws IOException {
+		checkClosed();
+		try (CommandFlusher flusher = new CommandFlusher()) {
+			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
+			out.writeShort(COMMAND_ASYNC_RESPONSE);
+			out.writeInt(variablesid);
+		}
+	}
+
 	private static void checkRedispatchResponseAdded(boolean responseadded) {
 		if (!responseadded) {
 			throw new RMICallFailedException("RMI redispatch call site is no longer available.");
@@ -3059,7 +3175,7 @@ final class RMIStream implements Closeable {
 	private void handleCommandCloseVariables(DataInputUnsyncByteArrayInputStream in) throws EOFException {
 		RMIVariables vars = readVariablesImpl(in);
 		if (vars != null) {
-			connection.remotelyClosedVariables(vars);
+			vars.remotelyClosed();
 		}
 	}
 
@@ -3833,12 +3949,6 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private static void checkAborting(Integer currentrequestid, RMIVariables vars) throws RMIIOFailureException {
-		if (currentrequestid != null && vars.isAborting()) {
-			throw new RMIIOFailureException("RMI variables is aborting. No new requests are allowed.");
-		}
-	}
-
 	private void checkAborting(Integer currentrequestid) throws RMIIOFailureException {
 		if (currentrequestid != null && connection.isAborting()) {
 			throw new RMIIOFailureException("RMI connection is aborting. No new requests are allowed.");
@@ -3887,10 +3997,10 @@ final class RMIStream implements Closeable {
 		}
 	}
 
+	//caller should call RMIVariables.addOngoingRequest(), which checks for RMIVariables state
 	Object callMethod(RMIVariables variables, int remoteid, MethodTransferProperties method, Object[] arguments)
 			throws RMIIOFailureException, InvocationTargetException {
 		Integer currentservingrequest = requestScopeHandler.getCurrentServingRequest();
-		checkAborting(currentservingrequest, variables);
 		return callMethod(variables, remoteid, method, currentservingrequest, arguments);
 	}
 
@@ -3910,10 +4020,10 @@ final class RMIStream implements Closeable {
 		}
 	}
 
+	//caller should call RMIVariables.addOngoingRequest(), which checks for RMIVariables state
 	Object callContextVariableMethod(RMIVariables variables, String variablename, MethodTransferProperties method,
 			Object[] arguments) throws RMIIOFailureException, InvocationTargetException {
 		Integer currentservingrequest = requestScopeHandler.getCurrentServingRequest();
-		checkAborting(currentservingrequest, variables);
 		return callContextVariableMethod(variables, variablename, method, currentservingrequest, arguments);
 	}
 
@@ -3936,7 +4046,6 @@ final class RMIStream implements Closeable {
 
 	void callMethodAsync(RMIVariables variables, int remoteid, MethodTransferProperties method, Object[] arguments)
 			throws RMIIOFailureException {
-		checkAborting(null, variables);
 		try {
 			writeCommandMethodCallAsync(variables, remoteid, method, arguments);
 		} catch (IOException e) {
@@ -3991,10 +4100,10 @@ final class RMIStream implements Closeable {
 		connection.streamError(this, exc);
 	}
 
+	//caller should call RMIVariables.addOngoingRequest(), which checks for RMIVariables state
 	Object newRemoteInstance(RMIVariables variables, ConstructorTransferProperties<?> constructor, Object... arguments)
 			throws RMIIOFailureException, InvocationTargetException, RMICallFailedException {
 		Integer currentservingrequest = requestScopeHandler.getCurrentServingRequest();
-		checkAborting(currentservingrequest, variables);
 		return newRemoteInstance(variables, constructor, currentservingrequest, arguments);
 	}
 
@@ -4020,11 +4129,11 @@ final class RMIStream implements Closeable {
 		}
 	}
 
+	//caller should call RMIVariables.addOngoingRequest(), which checks for RMIVariables state
 	Object newRemoteOnlyInstance(RMIVariables variables, int remoteclassloaderid, String classname,
 			String[] constructorargumentclasses, Object[] constructorarguments)
 			throws RMIIOFailureException, RMICallFailedException, InvocationTargetException {
 		Integer currentservingrequest = requestScopeHandler.getCurrentServingRequest();
-		checkAborting(currentservingrequest, variables);
 		return newRemoteOnlyInstance(variables, remoteclassloaderid, classname, constructorargumentclasses,
 				constructorarguments, currentservingrequest);
 	}
@@ -4076,8 +4185,6 @@ final class RMIStream implements Closeable {
 	}
 
 	int createNewVariables(String name, int varlocalid) throws RMIRuntimeException {
-		checkAborting();
-
 		try (Request request = requestHandler.newRequest()) {
 			int reqid = request.getRequestId();
 			writeCommandNewVariables(name, varlocalid, reqid);
@@ -4103,8 +4210,6 @@ final class RMIStream implements Closeable {
 	}
 
 	Object getRemoteContextVariable(RMIVariables vars, String variablename) throws IOException {
-		checkAborting();
-
 		try (Request request = requestHandler.newRequest()) {
 			int reqid = request.getRequestId();
 			writeCommandGetContextVar(reqid, vars, variablename);

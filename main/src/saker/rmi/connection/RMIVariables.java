@@ -100,10 +100,15 @@ public class RMIVariables implements AutoCloseable {
 			.newUpdater(RMIVariables.class, "state");
 	/**
 	 * Flag set in {@link #state} if this {@link RMIVariables} is closed.
+	 * <p>
+	 * This is automatically set when the variables is {@linkplain #STATE_BIT_ABORTING aborting} and the ongoing request
+	 * count reached zero.
 	 */
 	private static final int STATE_BIT_CLOSED = 1 << 31;
 	/**
 	 * Flag set in {@link #state} if this {@link RMIVariables} should be closed after the last ongoing request is done.
+	 * <p>
+	 * This is set by the owner of the {@link RMIVariables}, that is, the code that created it.
 	 */
 	private static final int STATE_BIT_ABORTING = 1 << 30;
 	/**
@@ -146,6 +151,7 @@ public class RMIVariables implements AutoCloseable {
 	 * 
 	 * @see #STATE_BIT_ABORTING
 	 * @see #STATE_BIT_CLOSED
+	 * @see #STATE_BIT_REMOTE_CLOSED
 	 * @see #STATE_MASK_ONGOING_REQUEST_COUNT
 	 */
 	private volatile int state;
@@ -230,7 +236,7 @@ public class RMIVariables implements AutoCloseable {
 			}
 			if ((state & STATE_MASK_ONGOING_REQUEST_COUNT) == 0) {
 				//no ongoing requests, close right away
-				if (!AIFU_state.compareAndSet(this, state, state | STATE_BIT_ABORTING | STATE_BIT_CLOSED)) {
+				if (!AIFU_state.compareAndSet(this, state, state | (STATE_BIT_ABORTING | STATE_BIT_CLOSED))) {
 					//try again
 					continue;
 				}
@@ -995,10 +1001,13 @@ public class RMIVariables implements AutoCloseable {
 	void addOngoingRequest() {
 		while (true) {
 			int state = this.state;
-			if ((state & (STATE_BIT_CLOSED | STATE_BIT_ABORTING)) != 0) {
+			int c = state & STATE_MASK_ONGOING_REQUEST_COUNT;
+			if (c != 0) {
+				//there's still an ongoing request, allow further requests
+			} else if (((state & (STATE_BIT_ABORTING)) == (STATE_BIT_ABORTING))) {
+				//else no requests are ongoing, but the variables has been closed by the user
 				throw new RMIIOFailureException("Variables is closed.");
 			}
-			int c = state & STATE_MASK_ONGOING_REQUEST_COUNT;
 			//keep the flags, add one
 			if (!AIFU_state.compareAndSet(this, state, (state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | (c + 1))) {
 				continue;
@@ -1043,6 +1052,10 @@ public class RMIVariables implements AutoCloseable {
 		}
 	}
 
+	void remotelyClosed() {
+		connection.remotelyClosedVariables(this);
+	}
+
 	Object invokeAllowedNonRedirectMethod(int remoteid, MethodTransferProperties method, Object[] arguments)
 			throws InvocationTargetException {
 		addOngoingRequest();
@@ -1055,7 +1068,31 @@ public class RMIVariables implements AutoCloseable {
 
 	private void invokeAllowedNonRedirectMethodAsync(int remoteid, MethodTransferProperties method, Object[] arguments)
 			throws RMIIOFailureException {
-		stream.callMethodAsync(this, remoteid, method, arguments);
+		if (connection.getProtocolVersion() >= 2) {
+			//supports response for async
+			//the ongoing request will be removed when that response arrives
+			addOngoingRequest();
+			try {
+				stream.callMethodAsync(this, remoteid, method, arguments);
+			} catch (Throwable e) {
+				try {
+					removeOngoingRequest();
+				} catch (Throwable e2) {
+					e.addSuppressed(e2);
+				}
+				throw e;
+			}
+		} else {
+			//add ongoing request, and remove it right away
+			//which checks for the state of the RMIVariables
+			//as well as prevents the streams and connection to be concurrently closed
+			addOngoingRequest();
+			try {
+				stream.callMethodAsync(this, remoteid, method, arguments);
+			} finally {
+				removeOngoingRequest();
+			}
+		}
 	}
 
 	static Object invokeRedirectMethod(Object remoteobject, Method redirectmethod, Object[] arguments)

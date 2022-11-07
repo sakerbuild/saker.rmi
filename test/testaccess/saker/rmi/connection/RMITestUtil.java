@@ -128,6 +128,14 @@ public class RMITestUtil {
 		return connection.getStreamCount();
 	}
 
+	/**
+	 * Gets the variable on the remove side for the argument client proxy.
+	 * 
+	 * @param connection
+	 *            The server connection.
+	 * @param proxy
+	 *            The client proxy object.
+	 */
 	public static Object getRemoteVariablesVariable(RMIConnection connection, Object proxy) {
 		RemoteProxyObject proxyobj = (RemoteProxyObject) proxy;
 		RMIVariables vars = proxyobj.variables.get();
