@@ -23,7 +23,7 @@ import saker.rmi.connection.RMIConnection;
 import saker.rmi.connection.RMIOptions;
 import saker.rmi.connection.RMITestUtil;
 import saker.rmi.connection.RMIVariables;
-import saker.rmi.exception.RMIIOFailureException;
+import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.util.ReflectUtils;
 import testing.saker.SakerTest;
 import testing.saker.SakerTestCase;
@@ -92,8 +92,8 @@ public class RMIAsyncMethodInvokeMassTest extends SakerTestCase {
 			serverConnection.closeWait();
 		}
 		//check that the variables properly closes down, on both sides
-		assertException(RMIIOFailureException.class, () -> s.getCount());
-		assertException(RMIIOFailureException.class, () -> serverstub.getCount());
+		assertException(RMIResourceUnavailableException.class, () -> s.getCount());
+		assertException(RMIResourceUnavailableException.class, () -> serverstub.getCount());
 
 		//all the async calls should be finished when the connections are closed
 		assertEquals(i.count, CALL_COUNT);

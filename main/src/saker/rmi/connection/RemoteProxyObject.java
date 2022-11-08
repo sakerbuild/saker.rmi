@@ -22,8 +22,8 @@ import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import java.util.concurrent.locks.ReentrantLock;
 
 import saker.apiextract.api.ExcludeApi;
-import saker.rmi.exception.RMICallFailedException;
 import saker.rmi.exception.RMICallForbiddenException;
+import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.rmi.exception.RMIRuntimeException;
 import saker.util.ObjectUtils;
 import saker.util.ReflectUtils;
@@ -121,7 +121,7 @@ public abstract class RemoteProxyObject {
 	static final RMIVariables getCheckVariables(RemoteProxyObject remoteobject) {
 		RMIVariables variables = remoteobject.variables.get();
 		if (variables == null) {
-			throw new RMICallFailedException("RMIVariables not found. (RMI connection closed?)");
+			throw new RMIResourceUnavailableException("RMIVariables not found. (RMI connection closed?)");
 		}
 		return variables;
 	}

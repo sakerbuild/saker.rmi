@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 import saker.rmi.exception.RMICallFailedException;
 import saker.rmi.exception.RMICallForbiddenException;
+import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.rmi.exception.RMIContextVariableNotFoundException;
 import saker.rmi.exception.RMIIOFailureException;
 import saker.rmi.exception.RMIObjectTransferFailureException;
@@ -1006,7 +1007,7 @@ public class RMIVariables implements AutoCloseable {
 				//there's still an ongoing request, allow further requests
 			} else if (((state & (STATE_BIT_ABORTING)) == (STATE_BIT_ABORTING))) {
 				//else no requests are ongoing, but the variables has been closed by the user
-				throw new RMIIOFailureException("Variables is closed.");
+				throw new RMIResourceUnavailableException("Variables is closed.");
 			}
 			//keep the flags, add one
 			if (!AIFU_state.compareAndSet(this, state, (state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | (c + 1))) {
@@ -1254,7 +1255,7 @@ public class RMIVariables implements AutoCloseable {
 	RMITransferPropertiesHolder getPropertiesCheckClosed() {
 		RMITransferPropertiesHolder properties = this.properties;
 		if (properties == null) {
-			throw new RMICallFailedException("Variables is closed.");
+			throw new RMIResourceUnavailableException("Variables is closed.");
 		}
 		return properties;
 	}

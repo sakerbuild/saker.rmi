@@ -52,6 +52,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
+import java.util.function.Function;
 
 import saker.rmi.connection.RequestHandler.Request;
 import saker.rmi.exception.RMICallFailedException;
@@ -61,6 +62,7 @@ import saker.rmi.exception.RMIIOFailureException;
 import saker.rmi.exception.RMIInvalidConfigurationException;
 import saker.rmi.exception.RMIObjectTransferFailureException;
 import saker.rmi.exception.RMIProxyCreationFailedException;
+import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.rmi.exception.RMIRuntimeException;
 import saker.rmi.exception.RMIStackTracedException;
 import saker.rmi.io.RMIObjectInput;
@@ -448,6 +450,9 @@ final class RMIStream implements Closeable {
 
 	private static final AtomicReferenceFieldUpdater<RMIStream, RequestHandlerState> ARFU_requestHandlerState = AtomicReferenceFieldUpdater
 			.newUpdater(RMIStream.class, RequestHandlerState.class, "requestHandlerState");
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	private static final AtomicReferenceFieldUpdater<RMIStream, Function<? super Request, ? extends RMIRuntimeException>> ARFU_requestHandlerCloseReason = (AtomicReferenceFieldUpdater) AtomicReferenceFieldUpdater
+			.newUpdater(RMIStream.class, Function.class, "requestHandlerCloseReason");
 
 	protected final RMIConnection connection;
 	protected final RequestHandler requestHandler;
@@ -478,6 +483,8 @@ final class RMIStream implements Closeable {
 	private final ClassLoaderReflectionElementSupplier nullClassLoaderSupplier;
 
 	private final Collection<RMIVariables> associatedVariables = ConcurrentHashMap.newKeySet();
+
+	private volatile Function<? super Request, ? extends RMIRuntimeException> requestHandlerCloseReason;
 
 	private class CommandFlusher implements Closeable {
 		final StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer;
@@ -844,9 +851,11 @@ final class RMIStream implements Closeable {
 					//return and dont close the sockets
 					return;
 				} // else the stream is exiting
+				initRequestHandlerCloseReason(req -> new RMIIOFailureException("Reached end of RMI stream."));
 			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
 					| ServiceConfigurationError e) {
 				streamerrorexc = e;
+				addRequestHandlerCloseReason(r -> new RMIIOFailureException("Failed to read data from RMI socket.", e));
 			}
 			//close the request handler, as the stream reading is exiting
 			closeRequestHandler();
@@ -912,6 +921,41 @@ final class RMIStream implements Closeable {
 		connection.offerStreamTask(new RunInputRunnable());
 	}
 
+	private Function<? super Request, ? extends RMIRuntimeException> getRequestHandlerCloseReason() {
+		Function<? super Request, ? extends RMIRuntimeException> result = this.requestHandlerCloseReason;
+		if (result != null) {
+			return result;
+		}
+		return req -> {
+			return new RMIResourceUnavailableException("RMI stream closed.");
+		};
+	}
+
+	private void initRequestHandlerCloseReason(
+			Function<? super Request, ? extends RMIRuntimeException> requestHandlerCloseReason) {
+		ARFU_requestHandlerCloseReason.compareAndSet(this, null, requestHandlerCloseReason);
+	}
+
+	private void addRequestHandlerCloseReason(
+			Function<? super Request, ? extends RMIRuntimeException> requestHandlerCloseReason) {
+		while (true) {
+			Function<? super Request, ? extends RMIRuntimeException> f = this.requestHandlerCloseReason;
+			Function<? super Request, ? extends RMIRuntimeException> nfunc;
+			if (f == null) {
+				nfunc = requestHandlerCloseReason;
+			} else {
+				nfunc = req -> {
+					RMIRuntimeException res = f.apply(req);
+					res.addSuppressed(requestHandlerCloseReason.apply(req));
+					return res;
+				};
+			}
+			if (ARFU_requestHandlerCloseReason.compareAndSet(this, f, nfunc)) {
+				break;
+			}
+		}
+	}
+
 	private void closeRequestHandler() {
 		while (true) {
 			RequestHandlerState state = this.requestHandlerState;
@@ -921,7 +965,7 @@ final class RMIStream implements Closeable {
 			RequestHandlerState nstate = state.close();
 			if (ARFU_requestHandlerState.compareAndSet(this, state, nstate)) {
 				if (nstate.unprocessedResponseCount == 0) {
-					requestHandler.close();
+					requestHandler.close(getRequestHandlerCloseReason());
 				}
 				break;
 			}
@@ -943,7 +987,7 @@ final class RMIStream implements Closeable {
 			RequestHandlerState nstate = state.removeResponseCount();
 			if (ARFU_requestHandlerState.compareAndSet(this, state, nstate)) {
 				if (nstate.closed && nstate.unprocessedResponseCount == 0) {
-					requestHandler.close();
+					requestHandler.close(getRequestHandlerCloseReason());
 				}
 				break;
 			}
@@ -965,6 +1009,7 @@ final class RMIStream implements Closeable {
 		}
 		outSemaphore.acquireUninterruptibly();
 		try {
+			initRequestHandlerCloseReason(req -> new RMIIOFailureException("RMI stream closed."));
 			writeStreamCloseIfNotWrittenLocked();
 		} finally {
 			outSemaphore.release();
@@ -1089,21 +1134,35 @@ final class RMIStream implements Closeable {
 	protected void flushCommand(StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> bufferref)
 			throws IOException {
 		try {
-			checkClosed();
-
 			outSemaphore.acquireUninterruptibly();
+			//check closed in the lock
+			//the exception from the checkClosed() doesn't need to be passed to streamError()
+			if (streamCloseWritten != 0) {
+				outSemaphore.release();
+				throw new IOException("Stream already closed.");
+			}
 			try {
 				//XXX we might remove checkClosed calls from the command writers
-				bufferref.get().writeTo(blockOut);
-				blockOut.nextBlock();
-				//need to flush, as the underlying output stream might be buffered, or anything
-				blockOut.flush();
-			} finally {
-				outSemaphore.release();
+				try {
+					bufferref.get().writeTo(blockOut);
+					blockOut.nextBlock();
+					//need to flush, as the underlying output stream might be buffered, or anything
+					blockOut.flush();
+				} finally {
+					//we need to release the lock before handling the possible IOException
+					//as that might recursively call other writer functions to the stream
+					//(like close writing)
+					outSemaphore.release();
+				}
+			} catch (IOException e) {
+				try {
+					streamError(e);
+				} catch (Throwable e2) {
+					e2.addSuppressed(e);
+					throw e2;
+				}
+				throw e;
 			}
-		} catch (IOException e) {
-			streamError(e);
-			throw e;
 		} finally {
 			connection.releaseCachedByteBuffer(bufferref);
 		}
@@ -1864,14 +1923,6 @@ final class RMIStream implements Closeable {
 		return connection.getClassLoaderByIdOptional(clid);
 	}
 
-	static class ClassLoaderNotFoundIOException extends IOException {
-		private static final long serialVersionUID = 1L;
-
-		public ClassLoaderNotFoundIOException(String classloaderid) {
-			super("ClassLoader not found for id: " + classloaderid);
-		}
-	}
-
 	private static class ClassSetPartiallyReadException extends Exception {
 		private static final long serialVersionUID = 1L;
 
@@ -2334,7 +2385,7 @@ final class RMIStream implements Closeable {
 			throws IOException, RMICallFailedException {
 		RMIVariables variables = readVariablesImpl(in);
 		if (variables == null) {
-			throw new RMICallFailedException("Variables not found.");
+			throw new RMIResourceUnavailableException("Variables not found.");
 		}
 		return variables;
 	}
@@ -3152,20 +3203,32 @@ final class RMIStream implements Closeable {
 			int reqid = in.readInt();
 			boolean interrupted = false;
 			int interruptreqcount = 0;
+			RMIVariables variables;
 			try {
-				RMIVariables variables = readVariablesValidate(in);
+				variables = readVariablesValidate(in);
 				int compressedinterruptstatus = in.readInt();
-				Object value = readObject(variables, in);
-
 				interrupted = isCompressedInterruptStatusInvokerThreadInterrupted(compressedinterruptstatus);
 				interruptreqcount = getCompressedInterruptStatusDeliveredRequestCount(compressedinterruptstatus);
+			} catch (IOException e) {
+				requestHandler.addResponse(reqid, new MethodCallIOFailureResponse(interrupted, interruptreqcount,
+						"Failed to read method result.", e));
+				return;
+			} catch (RMIRuntimeException e) {
+				requestHandler.addResponse(reqid, new MethodCallFailedResponse(interrupted, interruptreqcount, e));
+				return;
+			}
 
-				requestHandler.addResponse(reqid, new MethodCallResponse(interrupted, interruptreqcount, value));
+			Object value;
+			try {
+				value = readObject(variables, in);
 			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
 					| ServiceConfigurationError e) {
-				requestHandler.addResponse(reqid, new MethodCallFailedResponse(interrupted, interruptreqcount,
-						new RMICallFailedException("Failed to read method result.", e)));
+				requestHandler.addResponse(reqid, new MethodCallObjectTransferFailedResponse(interrupted,
+						interruptreqcount, "Failed to read method result.", e));
+				return;
 			}
+
+			requestHandler.addResponse(reqid, new MethodCallResponse(interrupted, interruptreqcount, value));
 		} finally {
 			gcaction.decreasePendingRequestCount();
 			requestHandlerRemoveResponseCount();
@@ -3404,7 +3467,6 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandPong(int reqid) throws IOException {
-		checkClosed();
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_PONG);
@@ -3413,7 +3475,6 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandCachedClass(ClassReflectionElementSupplier clazz, int index) {
-		checkClosed();
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_CACHED_CLASS);
@@ -3425,7 +3486,6 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandCachedClassLoader(ClassLoaderReflectionElementSupplier cl, int index) {
-		checkClosed();
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_CACHED_CLASSLOADER);
@@ -3437,7 +3497,6 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandCachedMethod(MethodReflectionElementSupplier method, int index) {
-		checkClosed();
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_CACHED_METHOD);
@@ -3449,7 +3508,6 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandCachedConstructor(ConstructorReflectionElementSupplier constructor, int index) {
-		checkClosed();
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_CACHED_CONSTRUCTOR);
@@ -3461,7 +3519,6 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandCachedField(FieldReflectionElementSupplier field, int index) {
-		checkClosed();
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_CACHED_FIELD);
@@ -3473,7 +3530,6 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandNewVariablesResult(int reqid, int localid) throws IOException {
-		checkClosed();
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_NEW_VARIABLES_RESULT);
@@ -3515,7 +3571,7 @@ final class RMIStream implements Closeable {
 	private Object readNewRemoteObject(RMIVariables variables, DataInputUnsyncByteArrayInputStream in)
 			throws IOException {
 		if (variables == null) {
-			throw new IOException("Failed to read remote object with null variables.");
+			throw new RMIObjectTransferFailureException("Failed to read remote object with null variables.");
 		}
 		Set<Class<?>> classes;
 		try {
@@ -3943,15 +3999,15 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	protected void checkClosed() throws RMIIOFailureException {
+	protected void checkClosed() throws RMIIOFailureException, IOException {
 		if (streamCloseWritten != 0) {
-			throw new RMIIOFailureException("Stream closed.");
+			throw new IOException("Stream already closed.");
 		}
 	}
 
 	private void checkAborting(Integer currentrequestid) throws RMIIOFailureException {
 		if (currentrequestid != null && connection.isAborting()) {
-			throw new RMIIOFailureException("RMI connection is aborting. No new requests are allowed.");
+			throw new RMIResourceUnavailableException("RMI connection is aborting. No new requests are allowed.");
 		}
 	}
 
@@ -4097,6 +4153,9 @@ final class RMIStream implements Closeable {
 	}
 
 	protected final void streamError(Throwable exc) {
+		//only set the close reason if this is the first exception that we encounter, otherwise some other error
+		//was recorded, and this is probably also a cause of that
+		initRequestHandlerCloseReason(req -> new RMIIOFailureException("RMI stream error.", exc));
 		connection.streamError(this, exc);
 	}
 

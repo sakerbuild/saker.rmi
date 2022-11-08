@@ -37,9 +37,9 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 
-import saker.rmi.connection.RMIStream.ClassLoaderNotFoundIOException;
 import saker.rmi.connection.RMIStream.RequestScopeHandler;
 import saker.rmi.connection.RMIStream.ThreadLocalRequestScopeHandler;
+import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.rmi.exception.RMIIOFailureException;
 import saker.rmi.exception.RMIListenerException;
 import saker.rmi.exception.RMIRuntimeException;
@@ -479,7 +479,7 @@ public final class RMIConnection implements AutoCloseable {
 		stream.associateVariables(result);
 		if (aborting) {
 			result.close();
-			throw new RMIIOFailureException("Connection aborting.");
+			throw new RMIResourceUnavailableException("Connection aborting.");
 		}
 		return result;
 	}
@@ -1010,13 +1010,13 @@ public final class RMIConnection implements AutoCloseable {
 					int cocstreams = connectedOrConnectingStreamCount.getAndIncrement();
 					if (cocstreams >= maxStreamCount) {
 						//cant connect to any more streams
-						throw new RMIIOFailureException("No stream found.");
+						throw new RMIResourceUnavailableException("No stream found.");
 					}
 
 					minstream = null;
 					connect = true;
 				} else {
-					throw new RMIIOFailureException("No stream found.");
+					throw new RMIResourceUnavailableException("No stream found.");
 				}
 			} else {
 				minstream = it.next();
@@ -1094,7 +1094,7 @@ public final class RMIConnection implements AutoCloseable {
 
 				if (aborting) {
 					//ignorable if we're already aborting
-					throw new RMIIOFailureException("Connection aborting.", e);
+					throw new RMIResourceUnavailableException("Connection aborting.", e);
 				}
 				// notify the user of the RMI library about the exception
 				invokeIOErrorListeners(e, false);
@@ -1191,19 +1191,6 @@ public final class RMIConnection implements AutoCloseable {
 			}
 		}
 		return null;
-	}
-
-	ClassLoader getClassLoaderByIdOrThrow(String id) throws ClassLoaderNotFoundIOException {
-		if (id == null) {
-			return nullClassLoader;
-		}
-		if (classLoaderResolver != null) {
-			ClassLoader found = classLoaderResolver.getClassLoaderForIdentifier(id);
-			if (found != null) {
-				return found;
-			}
-		}
-		throw new ClassLoaderNotFoundIOException(id);
 	}
 
 	RMIStatistics getCollectingStatistics() {
@@ -1317,13 +1304,13 @@ public final class RMIConnection implements AutoCloseable {
 				sb.append(exitmessage);
 				sb.append(')');
 			}
-			throw new RMIIOFailureException(sb.toString());
+			throw new RMIResourceUnavailableException(sb.toString());
 		}
 	}
 
 	private void checkAborting() {
 		if (aborting) {
-			throw new RMIIOFailureException("Connection aborting.");
+			throw new RMIResourceUnavailableException("Connection aborting.");
 		}
 	}
 

@@ -1,9 +1,11 @@
 package testing.saker.build.tests.rmi;
 
+import java.io.PrintStream;
 import java.util.concurrent.ThreadLocalRandom;
 
 import saker.rmi.connection.RMITestUtil;
 import saker.rmi.connection.RMIVariables;
+import saker.rmi.connection.RMIConnection.IOErrorListener;
 import saker.rmi.exception.RMIIOFailureException;
 import testing.saker.SakerTest;
 
@@ -44,6 +46,28 @@ public class DispatchFailureRMITest extends BaseVariablesRMITestCase {
 
 	@Override
 	protected void runVariablesTestImpl() throws Exception {
+		System.err.println("DispatchFailureRMITest.runVariablesTestImpl() start test");
+		clientConnection.addErrorListener(new IOErrorListener() {
+			@Override
+			public void onIOError(Throwable exc) {
+				PrintStream errout = System.err;
+				synchronized (errout) {
+					errout.println("Client error:");
+					exc.printStackTrace(errout);
+				}
+			}
+		});
+		serverConnection.addErrorListener(new IOErrorListener() {
+			@Override
+			public void onIOError(Throwable exc) {
+				PrintStream errout = System.err;
+				synchronized (errout) {
+					errout.println("Server error:");
+					exc.printStackTrace(errout);
+				}
+			}
+		});
+
 		//synchronize, only a single test can be run at a time
 		synchronized (DispatchFailureRMITest.class) {
 			varsStreamToClose = serverVariables;
