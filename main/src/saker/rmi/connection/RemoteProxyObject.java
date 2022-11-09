@@ -25,6 +25,7 @@ import saker.apiextract.api.ExcludeApi;
 import saker.rmi.exception.RMICallForbiddenException;
 import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.rmi.exception.RMIRuntimeException;
+import saker.util.ArrayUtils;
 import saker.util.ObjectUtils;
 import saker.util.ReflectUtils;
 
@@ -36,6 +37,14 @@ import saker.util.ReflectUtils;
  */
 @ExcludeApi
 public abstract class RemoteProxyObject {
+
+	/**
+	 * The {@link StackTraceElement} signalling that a remote call was made on the stack.
+	 */
+	//let the method name be an invalid name, and have brackets around it, like <clinit> has
+	private static final StackTraceElement RMI_REMOTE_CALL_STACK_TRACE_ELEMENT = new StackTraceElement("saker.rmi",
+			"<REMOTE-CALL>", null, -1);
+
 	//Bytecode for the proxy objects are generated in the class ProxyGenerator.
 	protected final Reference<? extends RMIVariables> variables;
 	protected final int remoteId;
@@ -68,7 +77,9 @@ public abstract class RemoteProxyObject {
 		} catch (RMIRuntimeException e) {
 			throw getExceptionRethrowException(m, e);
 		} catch (InvocationTargetException e) {
-			throw e.getTargetException();
+			Throwable targetexc = e.getTargetException();
+			targetexc.setStackTrace(mergeStackTrace(targetexc, Thread.currentThread().getStackTrace()));
+			throw targetexc;
 		} finally {
 			reachabilityFence(remoteobject);
 		}
@@ -88,8 +99,17 @@ public abstract class RemoteProxyObject {
 		} catch (RMIRuntimeException e) {
 			throw getExceptionRethrowException(m, e);
 		} catch (InvocationTargetException e) {
-			throw e.getTargetException();
+			Throwable targetexc = e.getTargetException();
+			targetexc.setStackTrace(mergeStackTrace(targetexc, Thread.currentThread().getStackTrace()));
+			throw targetexc;
 		}
+	}
+
+	private static StackTraceElement[] mergeStackTrace(Throwable targetexc, StackTraceElement[] threadstack) {
+		//threadstack will have the java.lang.Thread.getStackTrace() method call at the 0 index
+		//replace this with one that signals the RMI transfer over the wire
+		threadstack[0] = RMI_REMOTE_CALL_STACK_TRACE_ELEMENT;
+		return ArrayUtils.concat(targetexc.getStackTrace(), threadstack);
 	}
 
 	protected static final RMIVariables getVariables(RemoteProxyObject remoteobject) {
