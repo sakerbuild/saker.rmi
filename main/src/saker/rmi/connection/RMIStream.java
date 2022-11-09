@@ -28,6 +28,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.ObjectStreamClass;
 import java.io.OutputStream;
+import java.io.UTFDataFormatException;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
@@ -502,7 +503,7 @@ final class RMIStream implements Closeable {
 		}
 
 		@Override
-		public void close() throws IOException {
+		public void close() {
 			flushCommand(buffer);
 		}
 	}
@@ -1132,14 +1133,14 @@ final class RMIStream implements Closeable {
 	}
 
 	protected void flushCommand(StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> bufferref)
-			throws IOException {
+			throws RMIIOFailureException {
 		try {
 			outSemaphore.acquireUninterruptibly();
 			//check closed in the lock
 			//the exception from the checkClosed() doesn't need to be passed to streamError()
 			if (streamCloseWritten != 0) {
 				outSemaphore.release();
-				throw new IOException("Stream already closed.");
+				throw new RMIResourceUnavailableException("Stream already closed.");
 			}
 			try {
 				//XXX we might remove checkClosed calls from the command writers
@@ -1161,7 +1162,7 @@ final class RMIStream implements Closeable {
 					e2.addSuppressed(e);
 					throw e2;
 				}
-				throw e;
+				throw new RMIIOFailureException("Failed to write RMI command to stream.", e);
 			}
 		} finally {
 			connection.releaseCachedByteBuffer(bufferref);
@@ -2418,7 +2419,7 @@ final class RMIStream implements Closeable {
 		}
 
 		@Override
-		public void executeRedispatchAction() throws IOException {
+		public void executeRedispatchAction() {
 			invokeAndWriteMethodCall(requestId, variables, invokeObject, method, args);
 		}
 
@@ -2443,7 +2444,7 @@ final class RMIStream implements Closeable {
 		}
 
 		@Override
-		public void executeRedispatchAction() throws IOException {
+		public void executeRedispatchAction() {
 			instantiateAndWriteNewInstanceCall(requestId, variables, constructor, args);
 		}
 
@@ -2472,7 +2473,7 @@ final class RMIStream implements Closeable {
 		}
 
 		@Override
-		public void executeRedispatchAction() throws IOException {
+		public void executeRedispatchAction() {
 			instantiateAndWriteUnknownNewInstanceCall(requestId, variables, cl, className, argClassNames, args);
 		}
 
@@ -2490,7 +2491,7 @@ final class RMIStream implements Closeable {
 		}
 
 		@Override
-		public void executeRedispatchAction() throws IOException {
+		public void executeRedispatchAction() {
 			throw new RMIContextVariableNotFoundException(varname);
 		}
 
@@ -2777,8 +2778,7 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private void writeDirectRequestForbidden(short command, int reqid) throws IOException {
-		checkClosed();
+	private void writeDirectRequestForbidden(short command, int reqid) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_DIRECT_REQUEST_FORBIDDEN);
@@ -3175,8 +3175,7 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private void writeCommandAsyncResponse(int variablesid) throws IOException {
-		checkClosed();
+	private void writeCommandAsyncResponse(int variablesid) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_ASYNC_RESPONSE);
@@ -3264,8 +3263,7 @@ final class RMIStream implements Closeable {
 				"Object with id: " + localid + " is not an instance of " + ClassLoader.class.getName());
 	}
 
-	void writeCommandReferencesReleased(RMIVariables variables, int remoteid, int count)
-			throws IOException, InterruptedException {
+	void writeCommandReferencesReleased(RMIVariables variables, int remoteid, int count) throws InterruptedException {
 		if (count <= 0) {
 			throw new IllegalArgumentException("Count must be greater than zero: " + count);
 		}
@@ -3286,7 +3284,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void instantiateAndWriteUnknownNewInstanceCall(int reqid, RMIVariables variables, ClassLoader cl,
-			String classname, String[] argclassnames, Object[] args) throws IOException {
+			String classname, String[] argclassnames, Object[] args) {
 
 		Thread thread = Thread.currentThread();
 		variables.addOngoingRequest();
@@ -3370,7 +3368,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void instantiateAndWriteNewInstanceCall(int reqid, RMIVariables variables, Constructor<?> constructor,
-			Object[] args) throws IOException {
+			Object[] args) {
 		Thread thread = Thread.currentThread();
 		variables.addOngoingRequest();
 		try {
@@ -3397,7 +3395,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void invokeAndWriteMethodCall(int reqid, RMIVariables variables, Object invokeobject,
-			MethodTransferProperties method, Object[] args) throws IOException {
+			MethodTransferProperties method, Object[] args) {
 		Thread thread = Thread.currentThread();
 		variables.addOngoingRequest();
 		try {
@@ -3422,8 +3420,7 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private void writeCommandInterruptRequest(int reqid) throws IOException {
-		checkClosed();
+	private void writeCommandInterruptRequest(int reqid) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_INTERRUPT_REQUEST);
@@ -3431,8 +3428,7 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private void writeCommandPing(int reqid) throws IOException {
-		checkClosed();
+	private void writeCommandPing(int reqid) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_PING);
@@ -3440,18 +3436,22 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private void writeCommandGetContextVar(int reqid, RMIVariables vars, String variableid) throws IOException {
-		checkClosed();
+	private void writeCommandGetContextVar(int reqid, RMIVariables vars, String variableid) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_GET_CONTEXT_VAR);
 			writeVariables(vars, out);
 			out.writeInt(reqid);
-			out.writeUTF(variableid);
+			try {
+				out.writeUTF(variableid);
+			} catch (UTFDataFormatException e) {
+				// if the variable id is too long
+				throw new IllegalArgumentException("Invalid context variable name: " + variableid, e);
+			}
 		}
 	}
 
-	private void writeGetContextVarResponse(int reqid, RMIVariables vars, Object result) throws IOException {
+	private void writeGetContextVarResponse(int reqid, RMIVariables vars, Object result) {
 		checkClosed();
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
@@ -3466,7 +3466,7 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private void writeCommandPong(int reqid) throws IOException {
+	private void writeCommandPong(int reqid) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_PONG);
@@ -3480,8 +3480,6 @@ final class RMIStream implements Closeable {
 			out.writeShort(COMMAND_CACHED_CLASS);
 			writeClassData(clazz, out);
 			out.writeInt(index);
-		} catch (IOException e) {
-			streamError(e);
 		}
 	}
 
@@ -3491,8 +3489,6 @@ final class RMIStream implements Closeable {
 			out.writeShort(COMMAND_CACHED_CLASSLOADER);
 			writeClassLoaderData(cl, out);
 			out.writeInt(index);
-		} catch (IOException e) {
-			streamError(e);
 		}
 	}
 
@@ -3502,8 +3498,6 @@ final class RMIStream implements Closeable {
 			out.writeShort(COMMAND_CACHED_METHOD);
 			writeMethodData(method, out);
 			out.writeInt(index);
-		} catch (IOException e) {
-			streamError(e);
 		}
 	}
 
@@ -3513,8 +3507,6 @@ final class RMIStream implements Closeable {
 			out.writeShort(COMMAND_CACHED_CONSTRUCTOR);
 			writeConstructorData(constructor, out);
 			out.writeInt(index);
-		} catch (IOException e) {
-			streamError(e);
 		}
 	}
 
@@ -3524,12 +3516,10 @@ final class RMIStream implements Closeable {
 			out.writeShort(COMMAND_CACHED_FIELD);
 			writeFieldData(field, out);
 			out.writeInt(index);
-		} catch (IOException e) {
-			streamError(e);
 		}
 	}
 
-	private void writeCommandNewVariablesResult(int reqid, int localid) throws IOException {
+	private void writeCommandNewVariablesResult(int reqid, int localid) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_NEW_VARIABLES_RESULT);
@@ -3584,8 +3574,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandUnknownNewInstanceResult(RMIVariables variables, int reqid, int localindex,
-			Set<Class<?>> interfaces, boolean currentthreadinterrupted, int interruptreqcount) throws IOException {
-		checkClosed();
+			Set<Class<?>> interfaces, boolean currentthreadinterrupted, int interruptreqcount) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_UNKNOWN_NEWINSTANCE_RESULT);
@@ -3598,8 +3587,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandNewInstanceResult(int reqid, int localindex, boolean currentthreadinterrupted,
-			int interruptreqcount) throws IOException {
-		checkClosed();
+			int interruptreqcount) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_NEWINSTANCE_RESULT);
@@ -3610,7 +3598,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandMethodCallAsync(RMIVariables variables, int remoteid, MethodTransferProperties method,
-			Object[] arguments) throws IOException {
+			Object[] arguments) {
 		checkClosed();
 		StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer = connection.getCachedByteBuffer();
 		DataOutputUnsyncByteArrayOutputStream out = buffer.get();
@@ -3637,7 +3625,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandMethodCall(RMIVariables variables, int reqid, int remoteid,
-			MethodTransferProperties method, Object[] arguments, Integer dispatch) throws IOException {
+			MethodTransferProperties method, Object[] arguments, Integer dispatch) {
 		checkClosed();
 		StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer = connection.getCachedByteBuffer();
 		DataOutputUnsyncByteArrayOutputStream out = buffer.get();
@@ -3671,7 +3659,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandContextVariableMethodCall(RMIVariables variables, int reqid, String variablename,
-			MethodTransferProperties method, Object[] arguments, Integer dispatch) throws IOException {
+			MethodTransferProperties method, Object[] arguments, Integer dispatch) {
 		checkClosed();
 		StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer = connection.getCachedByteBuffer();
 		DataOutputUnsyncByteArrayOutputStream out = buffer.get();
@@ -3685,7 +3673,11 @@ final class RMIStream implements Closeable {
 			out.writeInt(dispatch);
 		}
 		writeVariables(variables, out);
-		out.writeUTF(variablename);
+		try {
+			out.writeUTF(variablename);
+		} catch (UTFDataFormatException e) {
+			throw new IllegalArgumentException("Invalid context variable name: " + variablename, e);
+		}
 
 		writeMethod(method.getExecutable(), out);
 
@@ -3705,7 +3697,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandNewRemoteInstance(RMIVariables variables, int reqid,
-			ConstructorTransferProperties<?> constructor, Object[] arguments, Integer dispatch) throws IOException {
+			ConstructorTransferProperties<?> constructor, Object[] arguments, Integer dispatch) {
 		checkClosed();
 		StrongSoftReference<DataOutputUnsyncByteArrayOutputStream> buffer = connection.getCachedByteBuffer();
 		DataOutputUnsyncByteArrayOutputStream out = buffer.get();
@@ -3738,7 +3730,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandNewRemoteInstanceUnknownClass(RMIVariables variables, int reqid, int remoteclassloaderid,
-			String classname, String[] argumentclassnames, Object[] arguments, Integer dispatch) throws IOException {
+			String classname, String[] argumentclassnames, Object[] arguments, Integer dispatch) {
 		if (argumentclassnames.length != arguments.length) {
 			throw new RMICallFailedException("Length of argument types doesn't match provided argument object count: "
 					+ argumentclassnames.length + " != " + arguments.length);
@@ -3758,22 +3750,32 @@ final class RMIStream implements Closeable {
 		writeVariables(variables, out);
 		out.writeInt(remoteclassloaderid);
 
-		out.writeUTF(classname);
+		try {
+			out.writeUTF(classname);
+		} catch (UTFDataFormatException e) {
+			throw new RMIObjectTransferFailureException("Failed to transfer class name: " + classname, e);
+		}
 		out.writeInt(argumentclassnames.length);
 
 		Semaphore gcsemaphore = variables.gcCommandSemaphore;
 		gcsemaphore.acquireUninterruptibly();
 		try {
-			try {
-				for (int i = 0; i < argumentclassnames.length; i++) {
-					out.writeUTF(argumentclassnames[0]);
+			for (int i = 0; i < argumentclassnames.length; i++) {
+				try {
+					out.writeUTF(argumentclassnames[i]);
+				} catch (UTFDataFormatException e) {
+					throw new RMIObjectTransferFailureException(
+							"Failed to transfer argument[" + i + "] class name: " + argumentclassnames[i], e);
+				}
+				try {
 					Object obj = arguments[i];
 					writeObjectUsingWriteHandler(RMIObjectWriteHandler.defaultWriter(), variables, obj, out,
 							ObjectUtils.classOf(obj));
+				} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
+						| ServiceConfigurationError e) {
+					throw new RMIObjectTransferFailureException("Failed to write constructor call argument[" + i + "].",
+							e);
 				}
-			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
-					| ServiceConfigurationError e) {
-				throw new RMIObjectTransferFailureException("Failed to write constructor call parameters.", e);
 			}
 			flushCommand(buffer);
 		} finally {
@@ -3782,8 +3784,7 @@ final class RMIStream implements Closeable {
 	}
 
 	private void writeCommandMethodResult(RMIVariables variables, int reqid, Object returnvalue,
-			MethodTransferProperties executableproperties, boolean currentthreadinterrupted, int interruptreqcount)
-			throws IOException {
+			MethodTransferProperties executableproperties, boolean currentthreadinterrupted, int interruptreqcount) {
 		returnvalue = unwrapWrapperForTransfer(returnvalue, variables);
 
 		checkClosed();
@@ -3802,7 +3803,8 @@ final class RMIStream implements Closeable {
 			try {
 				writeObjectUsingWriteHandler(executableproperties.getReturnValueWriter(), variables, returnvalue, out,
 						executableproperties.getReturnType());
-			} catch (Exception e) {
+			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
+					| ServiceConfigurationError e) {
 				//failed to write the return value for some reason
 
 				//remove all previously written data from the buffer
@@ -3833,42 +3835,46 @@ final class RMIStream implements Closeable {
 		return -(comressedstatus + 1);
 	}
 
-	private void writeCommandContextVariableMethodCallVariableNotFound(int reqid, String varname) throws IOException {
-		checkClosed();
+	private void writeCommandContextVariableMethodCallVariableNotFound(int reqid, String varname) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_METHODCALL_CONTEXTVAR_NOT_FOUND);
 			out.writeInt(reqid);
-			out.writeUTF(varname);
+			try {
+				out.writeUTF(varname);
+			} catch (UTFDataFormatException e) {
+				// can't really happen, because the variable name was once encoded when we received it
+				// so we sould be able to encode it again, it must be an internal error if we cant
+				throw new IllegalStateException("Internal error, failed to re-encode context variable name: " + varname,
+						e);
+			}
 		}
 	}
 
 	private void writeCommandExceptionResult(short commandname, int reqid, Throwable exc,
-			boolean currentthreadinterrupted, int interruptreqcount) throws IOException {
-		checkClosed();
+			boolean currentthreadinterrupted, int interruptreqcount) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			writeCommandExceptionResult(commandname, reqid, exc, currentthreadinterrupted, interruptreqcount, out);
-		} catch (IOException ioe) {
-			ioe.addSuppressed(exc);
-			throw ioe;
 		}
 	}
 
 	private void writeCommandExceptionResult(short commandname, int reqid, Throwable exc,
-			boolean currentthreadinterrupted, int interruptreqcount, DataOutputUnsyncByteArrayOutputStream out)
-			throws IOException {
+			boolean currentthreadinterrupted, int interruptreqcount, DataOutputUnsyncByteArrayOutputStream out) {
 		out.writeShort(commandname);
 		out.writeInt(reqid);
 		out.writeInt(compressInterruptStatus(currentthreadinterrupted, interruptreqcount));
 		writeException(exc, out);
 	}
 
-	private void writeException(Throwable exc, DataOutputUnsyncByteArrayOutputStream out) throws IOException {
+	private void writeException(Throwable exc, DataOutputUnsyncByteArrayOutputStream out) {
 		if (!tryWriteException(exc, out)) {
 			Throwable ioe = new RMIStackTracedException(exc);
 			if (!tryWriteException(ioe, out)) {
-				throw new IOException(ioe);
+				//writing RMIStackTracedException should always succeed, 
+				//as they don't contain any special fields or anything
+				//consider this a harder failure
+				throw new RMIIOFailureException(ioe);
 			}
 		}
 	}
@@ -3980,18 +3986,21 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private void writeCommandNewVariables(String name, int identifier, int reqid) throws IOException {
-		checkClosed();
+	private void writeCommandNewVariables(String name, int identifier, int reqid) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_NEW_VARIABLES);
 			out.writeInt(reqid);
 			out.writeInt(identifier);
-			out.writeUTF(name == null ? "" : name);
+			try {
+				out.writeUTF(name == null ? "" : name);
+			} catch (UTFDataFormatException e) {
+				throw new IllegalArgumentException("Failed to write variables context name: " + name, e);
+			}
 		}
 	}
 
-	private void writeCommandCloseVariables(RMIVariables variables) throws IOException {
+	private void writeCommandCloseVariables(RMIVariables variables) {
 		try (CommandFlusher flusher = new CommandFlusher()) {
 			DataOutputUnsyncByteArrayOutputStream out = flusher.getBuffer();
 			out.writeShort(COMMAND_CLOSE_VARIABLES);
@@ -3999,9 +4008,9 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	protected void checkClosed() throws RMIIOFailureException, IOException {
+	protected void checkClosed() throws RMIIOFailureException {
 		if (streamCloseWritten != 0) {
-			throw new IOException("Stream already closed.");
+			throw new RMIResourceUnavailableException("Stream already closed.");
 		}
 	}
 
@@ -4064,12 +4073,7 @@ final class RMIStream implements Closeable {
 			Object[] arguments) throws RMIIOFailureException, InvocationTargetException {
 		try (Request request = requestHandler.newRequest()) {
 			int reqid = request.getRequestId();
-			try {
-				writeCommandMethodCall(variables, reqid, remoteid, method, arguments, dispatch);
-			} catch (IOException e) {
-				streamError(e);
-				throw new RMIIOFailureException(e);
-			}
+			writeCommandMethodCall(variables, reqid, remoteid, method, arguments, dispatch);
 			MethodCallResponse mcr = waitInterruptTrackingResponse(request, MethodCallResponse.class);
 
 			return mcr.getReturnValue();
@@ -4088,12 +4092,7 @@ final class RMIStream implements Closeable {
 			throws RMIIOFailureException, InvocationTargetException {
 		try (Request request = requestHandler.newRequest()) {
 			int reqid = request.getRequestId();
-			try {
-				writeCommandContextVariableMethodCall(variables, reqid, variablename, method, arguments, dispatch);
-			} catch (IOException e) {
-				streamError(e);
-				throw new RMIIOFailureException(e);
-			}
+			writeCommandContextVariableMethodCall(variables, reqid, variablename, method, arguments, dispatch);
 			MethodCallResponse mcr = waitInterruptTrackingResponse(request, MethodCallResponse.class);
 
 			return mcr.getReturnValue();
@@ -4102,53 +4101,39 @@ final class RMIStream implements Closeable {
 
 	void callMethodAsync(RMIVariables variables, int remoteid, MethodTransferProperties method, Object[] arguments)
 			throws RMIIOFailureException {
-		try {
-			writeCommandMethodCallAsync(variables, remoteid, method, arguments);
-		} catch (IOException e) {
-			streamError(e);
-			throw new RMIIOFailureException(e);
-		}
+		writeCommandMethodCallAsync(variables, remoteid, method, arguments);
 	}
 
 	private <RetType extends InterruptStatusTrackingRequestResponse> RetType waitInterruptTrackingResponse(
 			Request request, Class<RetType> type) {
-		try {
-			int interruptreqcount = 0;
-			while (true) {
-				try {
-					RequestResponse response = (RequestResponse) request.waitResponseInterruptible();
-					if (type.isInstance(response)) {
-						InterruptStatusTrackingRequestResponse intres = (InterruptStatusTrackingRequestResponse) response;
-						if (intres.isInvokerThreadInterrupted()
-								|| intres.getDeliveredInterruptRequestCount() < interruptreqcount) {
-							Thread.currentThread().interrupt();
-						}
-						@SuppressWarnings("unchecked")
-						RetType res = (RetType) intres;
-						return res;
+		int interruptreqcount = 0;
+		while (true) {
+			try {
+				RequestResponse response = (RequestResponse) request.waitResponseInterruptible();
+				if (type.isInstance(response)) {
+					InterruptStatusTrackingRequestResponse intres = (InterruptStatusTrackingRequestResponse) response;
+					if (intres.isInvokerThreadInterrupted()
+							|| intres.getDeliveredInterruptRequestCount() < interruptreqcount) {
+						Thread.currentThread().interrupt();
 					}
-					invokeDispatchingOrThrow(response);
-				} catch (InterruptedException e) {
-					++interruptreqcount;
-					writeCommandInterruptRequest(request.getRequestId());
+					@SuppressWarnings("unchecked")
+					RetType res = (RetType) intres;
+					return res;
 				}
+				invokeDispatchingOrThrow(response);
+			} catch (InterruptedException e) {
+				++interruptreqcount;
+				writeCommandInterruptRequest(request.getRequestId());
 			}
-		} catch (IOException e) {
-			streamError(e);
-			throw new RMIIOFailureException(e);
 		}
 	}
 
-	private void invokeDispatchingOrThrow(RequestResponse response) throws RMIIOFailureException {
+	private static void invokeDispatchingOrThrow(RequestResponse response) throws RMIIOFailureException {
 		if (response instanceof RedispatchResponse) {
 			RedispatchResponse mrr = (RedispatchResponse) response;
-			try {
-				mrr.executeRedispatchAction();
-			} catch (IOException e) {
-				streamError(e);
-			}
+			mrr.executeRedispatchAction();
 		} else {
-			throw new RMIIOFailureException("Unknown response received: " + response);
+			throw new RMICallFailedException("Unknown response received: " + response);
 		}
 	}
 
@@ -4172,12 +4157,7 @@ final class RMIStream implements Closeable {
 		try (Request request = requestHandler.newRequest()) {
 			int reqid = request.getRequestId();
 
-			try {
-				writeCommandNewRemoteInstance(variables, reqid, constructor, arguments, dispatch);
-			} catch (IOException e) {
-				streamError(e);
-				throw new RMIIOFailureException(e);
-			}
+			writeCommandNewRemoteInstance(variables, reqid, constructor, arguments, dispatch);
 
 			NewInstanceResponse response = waitInterruptTrackingResponse(request, NewInstanceResponse.class);
 
@@ -4203,13 +4183,8 @@ final class RMIStream implements Closeable {
 		try (Request request = requestHandler.newRequest()) {
 			int reqid = request.getRequestId();
 
-			try {
-				writeCommandNewRemoteInstanceUnknownClass(variables, reqid, remoteclassloaderid, classname,
-						constructorargumentclasses, constructorarguments, dispatch);
-			} catch (IOException e) {
-				streamError(e);
-				throw new RMIIOFailureException(e);
-			}
+			writeCommandNewRemoteInstanceUnknownClass(variables, reqid, remoteclassloaderid, classname,
+					constructorargumentclasses, constructorarguments, dispatch);
 
 			UnknownNewInstanceResponse response = waitInterruptTrackingResponse(request,
 					UnknownNewInstanceResponse.class);
@@ -4221,16 +4196,11 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	void writeVariablesClosed(RMIVariables variables) throws IOException {
+	void writeVariablesClosed(RMIVariables variables) {
 		if (!associatedVariables.remove(variables)) {
 			throw new IllegalArgumentException("RMIVariables is not associated with this stream.");
 		}
-		try {
-			writeCommandCloseVariables(variables);
-		} catch (IOException e) {
-			streamError(e);
-			throw e;
-		}
+		writeCommandCloseVariables(variables);
 	}
 
 	void associateVariables(RMIVariables variables) {
@@ -4249,33 +4219,24 @@ final class RMIStream implements Closeable {
 			writeCommandNewVariables(name, varlocalid, reqid);
 			NewVariablesResponse nvr = request.waitInstanceOfResponse(NewVariablesResponse.class);
 			return nvr.getRemoteIdentifier();
-		} catch (IOException e) {
-			streamError(e);
-			throw new RMIIOFailureException(e);
 		}
 	}
 
-	public void ping() throws IOException {
+	public void ping() {
 		checkAborting();
 
 		try (Request request = requestHandler.newRequest()) {
 			int reqid = request.getRequestId();
 			writeCommandPing(reqid);
 			request.waitInstanceOfResponse(PingResponse.class);
-		} catch (IOException e) {
-			streamError(e);
-			throw e;
 		}
 	}
 
-	Object getRemoteContextVariable(RMIVariables vars, String variablename) throws IOException {
+	Object getRemoteContextVariable(RMIVariables vars, String variablename) {
 		try (Request request = requestHandler.newRequest()) {
 			int reqid = request.getRequestId();
 			writeCommandGetContextVar(reqid, vars, variablename);
 			return request.waitInstanceOfResponse(GetContextVariableResponse.class).getVariable();
-		} catch (IOException e) {
-			streamError(e);
-			throw e;
 		}
 	}
 

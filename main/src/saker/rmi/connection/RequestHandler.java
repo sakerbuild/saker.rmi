@@ -27,6 +27,7 @@ import java.util.function.Function;
 import saker.rmi.exception.RMICallFailedException;
 import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.rmi.exception.RMIRuntimeException;
+import saker.util.ObjectUtils;
 
 class RequestHandler {
 	public static final int NO_REQUEST_ID = 0;
@@ -96,21 +97,22 @@ class RequestHandler {
 		}
 
 		@SuppressWarnings("unchecked")
-		public <T> T waitInstanceOfResponse(Class<T> clazz) throws IOException {
+		public <T> T waitInstanceOfResponse(Class<T> clazz) throws RMICallFailedException {
 			Object resp = waitResponse();
 			if (!clazz.isInstance(resp)) {
-				throw new IOException("Invalid response for request (" + resp.getClass() + "): " + resp
-						+ " expected instance of: " + clazz);
+				throw new RMICallFailedException("Invalid response for request (" + ObjectUtils.classNameOf(resp)
+						+ "): " + resp + " expected instance of: " + clazz);
 			}
 			return (T) resp;
 		}
 
 		@SuppressWarnings("unchecked")
-		public <T> T waitInstanceOfResponseInterruptible(Class<T> clazz) throws IOException, InterruptedException {
+		public <T> T waitInstanceOfResponseInterruptible(Class<T> clazz)
+				throws RMICallFailedException, InterruptedException {
 			Object resp = waitResponseInterruptible();
 			if (!clazz.isInstance(resp)) {
-				throw new IOException("Invalid response for request (" + resp.getClass() + "): " + resp
-						+ " expected instance of: " + clazz);
+				throw new RMICallFailedException("Invalid response for request (" + ObjectUtils.classNameOf(resp)
+						+ "): " + resp + " expected instance of: " + clazz);
 			}
 			return (T) resp;
 		}

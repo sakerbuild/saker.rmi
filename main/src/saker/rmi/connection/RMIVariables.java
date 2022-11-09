@@ -267,14 +267,14 @@ public class RMIVariables implements AutoCloseable {
 	 * @return The found remote variable or <code>null</code> if it is not set.
 	 * @throws RMIIOFailureException
 	 *             In case of I/O error.
+	 * @throws IllegalArgumentException
+	 *             If the given variable name is too long, and cannot be encoded via UTF-8 into less than 65536 bytes.
 	 * @see RMIConnection#putContextVariable(String, Object)
 	 */
-	public Object getRemoteContextVariable(String variablename) throws RMIIOFailureException {
+	public Object getRemoteContextVariable(String variablename) throws RMIIOFailureException, IllegalArgumentException {
 		addOngoingRequest();
 		try {
 			return stream.getRemoteContextVariable(this, variablename);
-		} catch (IOException e) {
-			throw new RMIIOFailureException(e);
 		} finally {
 			removeOngoingRequest();
 		}
@@ -346,11 +346,14 @@ public class RMIVariables implements AutoCloseable {
 	 * @throws InvocationTargetException
 	 *             If the method threw an exception.
 	 * @throws RMIContextVariableNotFoundException
-	 *             If the context variable with the given name was not found on the other endpoint
+	 *             If the context variable with the given name was not found on the other endpoint.
+	 * @throws IllegalArgumentException
+	 *             If the given variable name is too long, and cannot be encoded via UTF-8 into less than 65536 bytes.
 	 * @since saker.rmi 0.8.3
 	 */
 	public Object invokeContextVariableMethod(String variablename, MethodTransferProperties method, Object... arguments)
-			throws RMIRuntimeException, InvocationTargetException, RMIContextVariableNotFoundException {
+			throws RMIRuntimeException, InvocationTargetException, RMIContextVariableNotFoundException,
+			IllegalArgumentException {
 		if (connection.getProtocolVersion() < RMIConnection.PROTOCOL_VERSION_2) {
 			//fallback method for earlier protocol versions
 			Object variable = getRemoteContextVariable(variablename);
@@ -1596,8 +1599,9 @@ public class RMIVariables implements AutoCloseable {
 			//notify the remote connection about the unreachability
 			try {
 				stream.writeCommandReferencesReleased(this, remoteid, rpr.referenceCount);
-			} catch (RMIIOFailureException | IOException e) {
+			} catch (RMIRuntimeException e) {
 				//IO error occurred when we were trying to write the released command
+				//  (or the stream is already closed?)
 				//we expect that we wont be able to write any command to the streams
 				//so we exit the gc thread
 				//any remaining references are kept, until the variables instance is closed

@@ -404,7 +404,8 @@ public final class RMIConnection implements AutoCloseable {
 	 * @throws RMIRuntimeException
 	 *             If the operation failed.
 	 * @throws IllegalArgumentException
-	 *             If the name is <code>null</code> or empty.
+	 *             If the name is <code>null</code> or empty, or the given variables context name is too long, and
+	 *             cannot be encoded via UTF-8 into less than 65536 bytes.
 	 */
 	public RMIVariables getVariables(String name) throws RMIRuntimeException, IllegalArgumentException {
 		if (ObjectUtils.isNullOrEmpty(name)) {
@@ -903,7 +904,8 @@ public final class RMIConnection implements AutoCloseable {
 
 		try {
 			variables.getStream().writeVariablesClosed(variables);
-		} catch (IOException | RMIRuntimeException e) {
+		} catch (RMIRuntimeException e) {
+			//if stream closed or write fails, ignoreable, as the variable itself is being closed
 		}
 		closeIfAbortingAndNoVariablesLocked();
 	}
