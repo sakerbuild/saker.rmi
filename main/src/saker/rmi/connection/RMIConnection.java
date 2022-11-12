@@ -1002,71 +1002,40 @@ public final class RMIConnection implements AutoCloseable {
 	private RMIStream getStream() {
 		checkAborting();
 
-		RMIStream minstream;
+		RMIStream minstream = null;
 		boolean connect = false;
 		stateModifyLock.lock();
 		try {
 			//choose from existing streams
 			Iterator<RMIStream> it = allStreams.iterator();
-			if (!it.hasNext()) {
-				if (streamConnector != null && allStreams.size() < maxStreamCount) {
-					int cocstreams = connectedOrConnectingStreamCount.getAndIncrement();
-					if (cocstreams >= maxStreamCount) {
-						//cant connect to any more streams
-						throw new RMIResourceUnavailableException("No stream found.");
-					}
-
-					minstream = null;
-					connect = true;
-				} else {
-					throw new RMIResourceUnavailableException("No stream found.");
+			int minc = 0;
+			while (it.hasNext()) {
+				RMIStream stream = it.next();
+				int currentcount = stream.getAssociatedRMIVariablesCount();
+				if (currentcount < 0) {
+					//the stream got closed meanwhile
+					continue;
 				}
-			} else {
-				minstream = it.next();
-				int minc = minstream.getAssociatedRMIVariablesCount();
-				if (minc == 0) {
-					//no variables are used on this stream, can return it without checking the others
-					return minstream;
+				if (currentcount == 0) {
+					return stream;
 				}
-				if (!it.hasNext()) {
-					if (streamConnector != null && allStreams.size() < maxStreamCount) {
-						int cocstreams = connectedOrConnectingStreamCount.getAndIncrement();
-						if (cocstreams < maxStreamCount) {
-							//can connect to more streams, try it
-							connect = true;
-						} else {
-							return minstream;
-						}
-					} else {
-						return minstream;
-					}
-				} else {
-					do {
-						RMIStream stream = it.next();
-						int currentcount = stream.getAssociatedRMIVariablesCount();
-						if (currentcount == 0) {
-							return stream;
-						}
-						if (currentcount < minc) {
-							minc = currentcount;
-							minstream = stream;
-						}
-					} while (it.hasNext());
-
-					//all streams have at least 1 RMIVariables associated with them
-					//try to connect a new one if allowed, otherwise return the found one
-					if (streamConnector == null || allStreams.size() >= maxStreamCount) {
-						return minstream;
-					}
-
-					int cocstreams = connectedOrConnectingStreamCount.getAndIncrement();
-					if (cocstreams >= maxStreamCount) {
-						//cant connect to any more streams
-						return minstream;
-					}
-					connect = true;
+				if (minstream == null || currentcount < minc) {
+					minc = currentcount;
+					minstream = stream;
 				}
 			}
+			//all streams have at least 1 RMIVariables associated with them
+			//try to connect a new one if allowed, otherwise return the found one
+			if (streamConnector == null || allStreams.size() >= maxStreamCount
+					|| connectedOrConnectingStreamCount.getAndIncrement() >= maxStreamCount) {
+				//cant connect to any more streams
+				if (minstream == null) {
+					throw new RMIResourceUnavailableException("No stream found.");
+				}
+				return minstream;
+			}
+
+			connect = true;
 		} finally {
 			stateModifyLock.unlock();
 		}
@@ -1108,6 +1077,9 @@ public final class RMIConnection implements AutoCloseable {
 			}
 
 			return nstream;
+		}
+		if (minstream == null) {
+			throw new RMIResourceUnavailableException("No stream found.");
 		}
 		return minstream;
 	}

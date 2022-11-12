@@ -49,7 +49,6 @@ import java.util.ServiceConfigurationError;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
@@ -73,6 +72,7 @@ import saker.rmi.io.writer.ObjectWriterKind;
 import saker.rmi.io.writer.RMIObjectWriteHandler;
 import saker.rmi.io.writer.SelectorRMIObjectWriteHandler;
 import saker.rmi.io.writer.WrapperRMIObjectWriteHandler;
+import saker.util.ArrayUtils;
 import saker.util.ImmutableUtils;
 import saker.util.ObjectUtils;
 import saker.util.ReflectUtils;
@@ -91,6 +91,8 @@ import saker.util.ref.StrongSoftReference;
 // this is used when we write a command and automatically flush with outputFlusher
 @SuppressWarnings("try")
 final class RMIStream implements Closeable {
+	private static final RMIVariables[] EMPTY_RMI_VARIABLES_ARRAY = new RMIVariables[0];
+
 	public static final String EXCEPTION_MESSAGE_DIRECT_REQUESTS_FORBIDDEN = "Direct requests are forbidden.";
 
 	private static final AtomicIntegerFieldUpdater<RMIStream> AIFU_streamCloseWritten = AtomicIntegerFieldUpdater
@@ -232,7 +234,7 @@ final class RMIStream implements Closeable {
 	}
 
 	@FunctionalInterface
-	interface CommandHandler {
+	public interface CommandHandler {
 		/**
 		 * @return <code>true</code> if the next reading task has been offered
 		 */
@@ -241,7 +243,7 @@ final class RMIStream implements Closeable {
 	}
 
 	@FunctionalInterface
-	private interface SimpleCommandHandler extends CommandHandler {
+	public interface SimpleCommandHandler extends CommandHandler {
 		public void handleCommand(RMIStream stream, DataInputUnsyncByteArrayInputStream in) throws IOException;
 
 		@Override
@@ -254,7 +256,7 @@ final class RMIStream implements Closeable {
 	}
 
 	@FunctionalInterface
-	private interface GarbageCollectionPreventingCommandHandler extends CommandHandler {
+	public interface GarbageCollectionPreventingCommandHandler extends CommandHandler {
 		public void handleCommand(RMIStream stream, DataInputUnsyncByteArrayInputStream in,
 				ReferencesReleasedAction gcaction) throws IOException;
 
@@ -269,7 +271,7 @@ final class RMIStream implements Closeable {
 	}
 
 	@FunctionalInterface
-	private interface PendingResponseSimpleCommandHandler extends SimpleCommandHandler {
+	public interface PendingResponseSimpleCommandHandler extends SimpleCommandHandler {
 		@Override
 		public default boolean handleCommand(RMIStream stream, RunInputRunnable inputrunnable,
 				DataInputUnsyncByteArrayInputStream in, ReferencesReleasedAction gcaction) throws IOException {
@@ -284,7 +286,7 @@ final class RMIStream implements Closeable {
 	}
 
 	@FunctionalInterface
-	private interface PendingResponseGarbageCollectionPreventingCommandHandler extends CommandHandler {
+	public interface PendingResponseGarbageCollectionPreventingCommandHandler extends CommandHandler {
 		public void handleCommand(RMIStream stream, DataInputUnsyncByteArrayInputStream in,
 				ReferencesReleasedAction gcaction) throws IOException;
 
@@ -473,6 +475,9 @@ final class RMIStream implements Closeable {
 	private static final AtomicReferenceFieldUpdater<RMIStream, Function<? super Request, ? extends RMIRuntimeException>> ARFU_requestHandlerCloseReason = (AtomicReferenceFieldUpdater) AtomicReferenceFieldUpdater
 			.newUpdater(RMIStream.class, Function.class, "requestHandlerCloseReason");
 
+	private static final AtomicReferenceFieldUpdater<RMIStream, RMIVariables[]> ARFU_associatedVariables = AtomicReferenceFieldUpdater
+			.newUpdater(RMIStream.class, RMIVariables[].class, "associatedVariables");
+
 	protected final RMIConnection connection;
 	protected final RequestHandler requestHandler;
 	protected volatile RequestHandlerState requestHandlerState = RequestHandlerState.INTIAL;
@@ -501,7 +506,10 @@ final class RMIStream implements Closeable {
 	private final ClassLoader nullClassLoader;
 	private final ClassLoaderReflectionElementSupplier nullClassLoaderSupplier;
 
-	private final Collection<RMIVariables> associatedVariables = ConcurrentHashMap.newKeySet();
+	/**
+	 * The array of associated variables, or <code>null</code> if the stream read IO has shut down.
+	 */
+	private volatile RMIVariables[] associatedVariables = EMPTY_RMI_VARIABLES_ARRAY;
 
 	private volatile Function<? super Request, ? extends RMIRuntimeException> requestHandlerCloseReason;
 
@@ -527,7 +535,7 @@ final class RMIStream implements Closeable {
 	}
 
 	//XXX a test is recommended for this mechanism, to check that no gc action is pending when an RMIVariables is closed
-	static final class ReferencesReleasedAction {
+	public static final class ReferencesReleasedAction {
 		private static final class ReleaseData {
 			protected final RMIVariables vars;
 			protected final int localId;
@@ -694,7 +702,7 @@ final class RMIStream implements Closeable {
 		}
 	}
 
-	private final class RunInputRunnable implements Runnable {
+	public final class RunInputRunnable implements Runnable {
 		// this field could be kept on a per-RMIVariables basis, but this is fine for now
 		protected ReferencesReleasedAction gcAction = new ReferencesReleasedAction();
 
@@ -805,8 +813,21 @@ final class RMIStream implements Closeable {
 				streamerrorexc = e;
 				addRequestHandlerCloseReason(r -> new RMIIOFailureException("Failed to read data from RMI socket.", e));
 			}
-			//close the request handler, as the stream reading is exiting
-			closeRequestHandler();
+			try {
+				RMIVariables[] assocvars = ARFU_associatedVariables.getAndSet(RMIStream.this, null);
+				//close the request handler, as the stream reading is exiting
+				closeRequestHandler();
+				if (assocvars != null) {
+					//shouldn't be null, but safety check
+					for (RMIVariables vars : assocvars) {
+						vars.clearAsyncRequestsOnReadIOFailure();
+					}
+				}
+			} catch (Exception | LinkageError | StackOverflowError | OutOfMemoryError | AssertionError
+					| ServiceConfigurationError e) {
+				// this code shouldn't throw, but just in case handle it
+				streamerrorexc = IOUtils.addExc(streamerrorexc, e);
+			}
 			if (streamerrorexc != null) {
 				streamError(streamerrorexc);
 				//the stream error exception was handled
@@ -3249,7 +3270,7 @@ final class RMIStream implements Closeable {
 	private void handleCommandAsyncResponse(DataInputUnsyncByteArrayInputStream in) throws IOException {
 		RMIVariables vars = readVariablesImpl(in);
 		if (vars != null) {
-			vars.removeOngoingRequest();
+			vars.removeOngoingAsyncRequest();
 		}
 	}
 
@@ -4192,12 +4213,12 @@ final class RMIStream implements Closeable {
 		if (connection.getProtocolVersion() >= 2) {
 			//supports response for async
 			//the ongoing request will be removed when that response arrives
-			variables.addOngoingRequest();
+			variables.addOngoingAsyncRequest();
 			try {
 				writeCommandMethodCallAsyncWithResponse(variables, remoteid, method, arguments);
 			} catch (Throwable e) {
 				try {
-					variables.removeOngoingRequest();
+					variables.removeOngoingAsyncRequest();
 				} catch (Throwable e2) {
 					e.addSuppressed(e2);
 				}
@@ -4207,11 +4228,11 @@ final class RMIStream implements Closeable {
 			//add ongoing request, and remove it right away
 			//which checks for the state of the RMIVariables
 			//as well as prevents the streams and connection to be concurrently closed
-			variables.addOngoingRequest();
+			variables.addOngoingAsyncRequest();
 			try {
 				writeCommandMethodCallAsync(variables, remoteid, method, arguments);
 			} finally {
-				variables.removeOngoingRequest();
+				variables.removeOngoingAsyncRequest();
 			}
 		}
 	}
@@ -4307,21 +4328,83 @@ final class RMIStream implements Closeable {
 		}
 	}
 
+	/**
+	 * Called while locked on {@link RMIConnection} state lock.
+	 * 
+	 * @param variables
+	 */
 	void writeVariablesClosed(RMIVariables variables) {
-		if (!associatedVariables.remove(variables)) {
-			throw new IllegalArgumentException("RMIVariables is not associated with this stream.");
+		while (true) {
+			RMIVariables[] vars = this.associatedVariables;
+			if (vars == null) {
+				//stream IO shut down, writing below might fail, but probably okay for the caller
+				break;
+			}
+			int associndex = variables.streamAssociationIndex;
+			if (associndex < 0 || associndex >= vars.length || vars[associndex] != variables) {
+				throw new IllegalArgumentException("RMIVariables is not associated with this stream.");
+			}
+			RMIVariables[] narray;
+			if (vars.length == 0) {
+				narray = EMPTY_RMI_VARIABLES_ARRAY;
+				if (ARFU_associatedVariables.compareAndSet(this, vars, narray)) {
+					variables.streamAssociationIndex = -1;
+					break;
+				}
+			} else if (associndex == vars.length - 1) {
+				narray = Arrays.copyOf(vars, vars.length - 1);
+				if (ARFU_associatedVariables.compareAndSet(this, vars, narray)) {
+					variables.streamAssociationIndex = -1;
+					break;
+				}
+			} else {
+				narray = new RMIVariables[vars.length - 1];
+				System.arraycopy(vars, 0, narray, 0, associndex);
+				RMIVariables movedvars = vars[vars.length - 1];
+				narray[associndex] = movedvars;
+				System.arraycopy(vars, associndex + 1, narray, associndex + 1, vars.length - associndex - 2);
+
+				if (ARFU_associatedVariables.compareAndSet(this, vars, narray)) {
+					variables.streamAssociationIndex = -1;
+					movedvars.streamAssociationIndex = associndex;
+					break;
+				}
+			}
+			//try again
 		}
 		writeCommandCloseVariables(variables);
 	}
 
-	void associateVariables(RMIVariables variables) {
-		if (!associatedVariables.add(variables)) {
-			throw new IllegalArgumentException("Failed to associate RMIVariables with stream.");
+	/**
+	 * Called while locked on {@link RMIConnection} state lock.
+	 * 
+	 * @param variables
+	 * @return <code>true</code> if the stream is alive, and the association was successful.
+	 */
+	boolean associateVariables(RMIVariables variables) {
+		while (true) {
+			RMIVariables[] vars = this.associatedVariables;
+			if (vars == null) {
+				return false;
+			}
+			RMIVariables[] narray = ArrayUtils.appended(vars, variables);
+			variables.streamAssociationIndex = vars.length;
+			if (ARFU_associatedVariables.compareAndSet(this, vars, narray)) {
+				return true;
+			}
+			//try again
 		}
 	}
 
+	/**
+	 * @return negative if the stream IO has shut down.
+	 */
 	int getAssociatedRMIVariablesCount() {
-		return associatedVariables.size();
+		RMIVariables[] vars = associatedVariables;
+		if (vars == null) {
+			return -1;
+		}
+		return vars.length;
 	}
 
 	int createNewVariables(String name, int varlocalid) throws RMIRuntimeException {

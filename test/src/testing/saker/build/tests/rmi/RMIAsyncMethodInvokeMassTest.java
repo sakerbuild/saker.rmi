@@ -15,6 +15,8 @@
  */
 package testing.saker.build.tests.rmi;
 
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
@@ -57,6 +59,12 @@ public class RMIAsyncMethodInvokeMassTest extends SakerTestCase {
 
 	@Override
 	public void runTest(Map<String, String> parameters) throws Throwable {
+		runMassTest(false);
+		runMassTest(true);
+	}
+
+	private void runMassTest(boolean callsyncmethodtoo) throws Exception, InvocationTargetException,
+			NoSuchMethodException, AssertionError, IOException, InterruptedException {
 		final int CALL_COUNT = 10000;
 
 		RMIOptions baseoptions = new RMIOptions().classLoader(getClass().getClassLoader());
@@ -80,7 +88,11 @@ public class RMIAsyncMethodInvokeMassTest extends SakerTestCase {
 					i = (Impl) RMITestUtil.getRemoteVariablesVariable(serverConnection, s);
 					assertNonNull(i);
 					for (int j = 0; j < CALL_COUNT; j++) {
-						RMIVariables.invokeRemoteMethodAsync(s, INCREMENT_METHOD);
+						if (callsyncmethodtoo && j % 3 == 0) {
+							s.increment();
+						} else {
+							RMIVariables.invokeRemoteMethodAsync(s, INCREMENT_METHOD);
+						}
 					}
 				} finally {
 					clientVariables.close();

@@ -35,6 +35,7 @@ import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 import saker.rmi.exception.RMICallFailedException;
 import saker.rmi.exception.RMICallForbiddenException;
@@ -97,25 +98,36 @@ public class RMIVariables implements AutoCloseable {
 	private static final AtomicIntegerFieldUpdater<RMIVariables> AIFU_objectIdProvider = AtomicIntegerFieldUpdater
 			.newUpdater(RMIVariables.class, "objectIdProvider");
 
-	private static final AtomicIntegerFieldUpdater<RMIVariables> AIFU_state = AtomicIntegerFieldUpdater
+	private static final AtomicLongFieldUpdater<RMIVariables> ALFU_state = AtomicLongFieldUpdater
 			.newUpdater(RMIVariables.class, "state");
+
 	/**
 	 * Flag set in {@link #state} if this {@link RMIVariables} is closed.
 	 * <p>
 	 * This is automatically set when the variables is {@linkplain #STATE_BIT_ABORTING aborting} and the ongoing request
 	 * count reached zero.
 	 */
-	private static final int STATE_BIT_CLOSED = 1 << 31;
+	private static final long STATE_BIT_CLOSED = 1L << 63;
 	/**
 	 * Flag set in {@link #state} if this {@link RMIVariables} should be closed after the last ongoing request is done.
 	 * <p>
 	 * This is set by the owner of the {@link RMIVariables}, that is, the code that created it.
 	 */
-	private static final int STATE_BIT_ABORTING = 1 << 30;
+	private static final long STATE_BIT_ABORTING = 1L << 62;
 	/**
 	 * Mask for {@link #state} holding the ongoing request count.
 	 */
-	private static final int STATE_MASK_ONGOING_REQUEST_COUNT = (1 << 30) - 1;
+	private static final long STATE_MASK_ONGOING_REQUEST_COUNT = (1L << 32) - 1;
+	/**
+	 * Mask for {@link #state} holding the ongoing async request count.
+	 * <p>
+	 * This is the number of async requests that was initiated.
+	 */
+	private static final long STATE_MASK_ONGOING_ASYNC_REQUEST_COUNT = (1L << 62) - 1
+			- STATE_MASK_ONGOING_REQUEST_COUNT;
+	private static final int STATE_ONGOING_ASYNC_REQUEST_COUNT_SHIFT = 32;
+	private static final long STATE_MASK_BOTH_REQUEST_COUNT = STATE_MASK_ONGOING_REQUEST_COUNT
+			| STATE_MASK_ONGOING_ASYNC_REQUEST_COUNT;
 
 	private final RMIConnection connection;
 	private final Object refSync = new Object();
@@ -142,6 +154,10 @@ public class RMIVariables implements AutoCloseable {
 	private volatile int objectIdProvider = 1;
 
 	private final RMIStream stream;
+	/**
+	 * The index in <code>RMIStream.associatedVariables</code>.
+	 */
+	int streamAssociationIndex = -1;
 
 	private final ReferenceQueue<Object> gcReferenceQueue = new ReferenceQueue<>();
 
@@ -154,8 +170,9 @@ public class RMIVariables implements AutoCloseable {
 	 * @see #STATE_BIT_CLOSED
 	 * @see #STATE_BIT_REMOTE_CLOSED
 	 * @see #STATE_MASK_ONGOING_REQUEST_COUNT
+	 * @see #STATE_MASK_ONGOING_ASYNC_REQUEST_COUNT
 	 */
-	private volatile int state;
+	private volatile long state;
 
 	private RMITransferPropertiesHolder properties;
 
@@ -217,7 +234,6 @@ public class RMIVariables implements AutoCloseable {
 	 * This always return <code>true</code> if {@link #isClosed()} returns <code>true</code>.
 	 * 
 	 * @return <code>true</code> if aborting.
-	 * 
 	 * @since saker.rmi 0.8.3
 	 */
 	public boolean isAborting() {
@@ -248,22 +264,22 @@ public class RMIVariables implements AutoCloseable {
 	@Override
 	public void close() {
 		while (true) {
-			int state = this.state;
+			long state = this.state;
 			if (((state & STATE_BIT_ABORTING) == STATE_BIT_ABORTING)) {
 				//already aborting, actual closing is done in either the previous close() call
 				//or when no more requests are ongoing 
 				return;
 			}
-			if ((state & STATE_MASK_ONGOING_REQUEST_COUNT) == 0) {
+			if ((state & STATE_MASK_BOTH_REQUEST_COUNT) == 0) {
 				//no ongoing requests, close right away
-				if (!AIFU_state.compareAndSet(this, state, state | (STATE_BIT_ABORTING | STATE_BIT_CLOSED))) {
+				if (!ALFU_state.compareAndSet(this, state, state | (STATE_BIT_ABORTING | STATE_BIT_CLOSED))) {
 					//try again
 					continue;
 				}
 				closeWithNoOngoingRequest();
 			} else {
 				//still some ongoing requests, only set aborting flag
-				if (!AIFU_state.compareAndSet(this, state, state | STATE_BIT_ABORTING)) {
+				if (!ALFU_state.compareAndSet(this, state, state | STATE_BIT_ABORTING)) {
 					//try again
 					continue;
 				}
@@ -1019,16 +1035,17 @@ public class RMIVariables implements AutoCloseable {
 
 	void addOngoingRequest() {
 		while (true) {
-			int state = this.state;
-			int c = state & STATE_MASK_ONGOING_REQUEST_COUNT;
+			long state = this.state;
+			long c = state & STATE_MASK_BOTH_REQUEST_COUNT;
 			if (c != 0) {
 				//there's still an ongoing request, allow further requests
 			} else if (((state & (STATE_BIT_ABORTING)) == (STATE_BIT_ABORTING))) {
 				//else no requests are ongoing, but the variables has been closed by the user
 				throw new RMIResourceUnavailableException("Variables is closed.");
 			}
+			c = c & STATE_MASK_ONGOING_REQUEST_COUNT;
 			//keep the flags, add one
-			if (!AIFU_state.compareAndSet(this, state, (state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | (c + 1))) {
+			if (!ALFU_state.compareAndSet(this, state, (state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | (c + 1))) {
 				continue;
 			}
 			return;
@@ -1037,54 +1054,123 @@ public class RMIVariables implements AutoCloseable {
 
 	boolean tryOngoingRequest() {
 		while (true) {
-			int state = this.state;
-			int c = state & STATE_MASK_ONGOING_REQUEST_COUNT;
+			long state = this.state;
+			long c = state & STATE_MASK_BOTH_REQUEST_COUNT;
 			if (c != 0) {
 				//there's still an ongoing request, allow further requests
 			} else if (((state & (STATE_BIT_ABORTING)) == (STATE_BIT_ABORTING))) {
 				//else no requests are ongoing, but the variables has been closed by the user
 				return false;
 			}
+			c = c & STATE_MASK_ONGOING_REQUEST_COUNT;
 			//keep the flags, add one
-			if (!AIFU_state.compareAndSet(this, state, (state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | (c + 1))) {
+			if (!ALFU_state.compareAndSet(this, state, (state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | (c + 1))) {
 				continue;
 			}
 			return true;
 		}
 	}
 
+	void addOngoingAsyncRequest() {
+		while (true) {
+			long state = this.state;
+			long c = state & STATE_MASK_BOTH_REQUEST_COUNT;
+			if (c != 0) {
+				//there's still an ongoing request, allow further requests
+			} else if (((state & (STATE_BIT_ABORTING)) == (STATE_BIT_ABORTING))) {
+				//else no requests are ongoing, but the variables has been closed by the user
+				throw new RMIResourceUnavailableException("Variables is closed.");
+			}
+			c = (c & STATE_MASK_ONGOING_ASYNC_REQUEST_COUNT) >>> STATE_ONGOING_ASYNC_REQUEST_COUNT_SHIFT;
+			//keep the flags, add one
+			if (!ALFU_state.compareAndSet(this, state, (state & ~STATE_MASK_ONGOING_ASYNC_REQUEST_COUNT)
+					| ((c + 1) << STATE_ONGOING_ASYNC_REQUEST_COUNT_SHIFT))) {
+				continue;
+			}
+			return;
+		}
+	}
+
 	void removeOngoingRequest() {
 		while (true) {
-			int state = this.state;
+			long state = this.state;
 
-			int c = state & STATE_MASK_ONGOING_REQUEST_COUNT;
-			switch (c) {
-				case 0: {
-					throw new IllegalStateException("No ongoing requests.");
+			long bothc = state & STATE_MASK_BOTH_REQUEST_COUNT;
+			long c = bothc & STATE_MASK_ONGOING_REQUEST_COUNT;
+			if (c == 0) {
+				//safety check
+				throw new IllegalStateException("No ongoing requests.");
+			}
+			long nbothc = (bothc & STATE_MASK_ONGOING_ASYNC_REQUEST_COUNT) | (c - 1);
+			long nstate = (state & ~STATE_MASK_BOTH_REQUEST_COUNT) | nbothc;
+			if (nbothc == 0 && ((state & STATE_BIT_ABORTING) == STATE_BIT_ABORTING)) {
+				//no more ongoing requests, and aborting, close as well
+				if (!ALFU_state.compareAndSet(this, state, nstate | STATE_BIT_CLOSED)) {
+					continue;
 				}
-				case 1: {
-					if (((state & STATE_BIT_ABORTING) == STATE_BIT_ABORTING)) {
-						//closing as well
-						if (!AIFU_state.compareAndSet(this, state,
-								(state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | STATE_BIT_CLOSED)) {
-							continue;
-						}
-						closeWithNoOngoingRequest();
-						return;
-					}
-					//not closing, clear request count
-					if (!AIFU_state.compareAndSet(this, state, state & ~STATE_MASK_ONGOING_REQUEST_COUNT)) {
-						continue;
-					}
-					return;
+				closeWithNoOngoingRequest();
+				return;
+			}
+			//only update the counts
+			if (ALFU_state.compareAndSet(this, state, nstate)) {
+				return;
+			}
+		}
+	}
+
+	void removeOngoingAsyncRequest() {
+		while (true) {
+			long state = this.state;
+
+			long bothc = state & STATE_MASK_BOTH_REQUEST_COUNT;
+			long c = (bothc & STATE_MASK_ONGOING_ASYNC_REQUEST_COUNT) >>> STATE_ONGOING_ASYNC_REQUEST_COUNT_SHIFT;
+			if (c == 0) {
+				//safety check
+				throw new IllegalStateException("No ongoing async requests.");
+			}
+			long nbothc = (bothc & STATE_MASK_ONGOING_REQUEST_COUNT)
+					| ((c - 1) << STATE_ONGOING_ASYNC_REQUEST_COUNT_SHIFT);
+			long nstate = (state & ~STATE_MASK_BOTH_REQUEST_COUNT) | nbothc;
+			if (nbothc == 0 && ((state & STATE_BIT_ABORTING) == STATE_BIT_ABORTING)) {
+				//no more ongoing requests, and aborting, close as well
+				if (!ALFU_state.compareAndSet(this, state, nstate | STATE_BIT_CLOSED)) {
+					continue;
 				}
-				default: {
-					//keep the flags, subtract one
-					if (!AIFU_state.compareAndSet(this, state, (state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | (c - 1))) {
-						continue;
-					}
-					return;
+				closeWithNoOngoingRequest();
+				return;
+			}
+			//only update the counts
+			if (ALFU_state.compareAndSet(this, state, nstate)) {
+				return;
+			}
+		}
+	}
+
+	void clearAsyncRequestsOnReadIOFailure() {
+		while (true) {
+			long state = this.state;
+
+			long bothc = state & STATE_MASK_BOTH_REQUEST_COUNT;
+			long c = (bothc & STATE_MASK_ONGOING_ASYNC_REQUEST_COUNT) >>> STATE_ONGOING_ASYNC_REQUEST_COUNT_SHIFT;
+			if (c == 0) {
+				//safety check
+				throw new IllegalStateException("No ongoing async requests.");
+			}
+			long nbothc = (bothc & STATE_MASK_ONGOING_REQUEST_COUNT);
+			//also set the aborting flag, because the variables should be closing after a read failure on the stream
+			//because we won't be receiving any response anymore 
+			long nstate = (state & ~STATE_MASK_BOTH_REQUEST_COUNT) | STATE_BIT_ABORTING | nbothc;
+			if (nbothc == 0) {
+				//no more ongoing requests, and aborting, close as well
+				if (!ALFU_state.compareAndSet(this, state, nstate | STATE_BIT_CLOSED)) {
+					continue;
 				}
+				closeWithNoOngoingRequest();
+				return;
+			}
+			//only update the counts
+			if (ALFU_state.compareAndSet(this, state, nstate)) {
+				return;
 			}
 		}
 	}
