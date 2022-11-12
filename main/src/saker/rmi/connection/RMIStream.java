@@ -4341,7 +4341,13 @@ final class RMIStream implements Closeable {
 				break;
 			}
 			int associndex = variables.streamAssociationIndex;
-			if (associndex < 0 || associndex >= vars.length || vars[associndex] != variables) {
+			if (associndex < 0) {
+				//the variables is not associated with this stream
+				//might be because the initialization failed/aborted, so it wasn't fully assigned to this stream
+				//skip removal from the array, and just go and write the close command
+				break;
+			}
+			if (associndex >= vars.length || vars[associndex] != variables) {
 				throw new IllegalArgumentException("RMIVariables is not associated with this stream.");
 			}
 			RMIVariables[] narray;

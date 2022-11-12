@@ -419,11 +419,11 @@ public final class RMIConnection implements AutoCloseable {
 			return result;
 		}
 		int identifier = AIFU_variablesIdentifierCounter.getAndIncrement(this);
-		RMIStream stream;
 		final Lock namedvarlock = getNamedVariablesGetLock(name);
 		stateModifyLock.lock();
 		try {
 			checkAborting();
+			RMIStream stream;
 			namedvarlock.lock();
 			try {
 				result = variablesByNames.get(name);
@@ -439,11 +439,16 @@ public final class RMIConnection implements AutoCloseable {
 				namedvarlock.unlock();
 			}
 			variablesByLocalId.put(identifier, result);
+
+			if (stream.associateVariables(result)) {
+				return result;
+			}
+			//close and throw the exception out of the lock
 		} finally {
 			stateModifyLock.unlock();
 		}
-		stream.associateVariables(result);
-		return result;
+		result.close();
+		throw new RMIIOFailureException("Failed to create variables, underlying stream IO error.");
 	}
 
 	/**
@@ -470,20 +475,25 @@ public final class RMIConnection implements AutoCloseable {
 		//XXX there's still a hazardous state, as getVariablesByLocalId() still returns this variables
 		//    so the other endpoint still could use this, but it is unlikely
 		//    anyway, event in that case, the variables will still be auto-closed when the last request finishes on it
-		boolean aborting;
+		RMIRuntimeException abortexc;
 		stateModifyLock.lock();
 		try {
 			variablesByLocalId.put(identifier, result);
-			aborting = this.aborting;
+			if (this.aborting) {
+				abortexc = new RMIResourceUnavailableException("Connection aborting.");
+			} else {
+				if (stream.associateVariables(result)) {
+					return result;
+				}
+				//couldn't associate with the stream
+				abortexc = new RMIIOFailureException("Failed to create variables, underlying stream IO error.");
+			}
+			//close and throw the exception out of the lock
 		} finally {
 			stateModifyLock.unlock();
 		}
-		stream.associateVariables(result);
-		if (aborting) {
-			result.close();
-			throw new RMIResourceUnavailableException("Connection aborting.");
-		}
-		return result;
+		result.close();
+		throw abortexc;
 	}
 
 	/**
@@ -891,7 +901,7 @@ public final class RMIConnection implements AutoCloseable {
 	}
 
 	/**
-	 * Locked on stateModifyLock.
+	 * Locked on {@link #stateModifyLock}.
 	 * 
 	 * @param variables
 	 * @param identifier
@@ -1398,11 +1408,16 @@ public final class RMIConnection implements AutoCloseable {
 			checkAborting();
 			result = new RMIVariables(AIFU_variablesIdentifierCounter.getAndIncrement(this), remoteid, this, stream);
 			variablesByLocalId.put(result.getLocalIdentifier(), result);
+
+			if (stream.associateVariables(result)) {
+				return result;
+			}
+			//close and throw the exception out of the lock
 		} finally {
 			stateModifyLock.unlock();
 		}
-		stream.associateVariables(result);
-		return result;
+		result.close();
+		throw new RMIIOFailureException("Failed to create variables, underlying stream IO error.");
 	}
 
 	private RMIVariables newNamedRemoteVariables(String name, int remoteid, RMIStream stream) {
@@ -1438,11 +1453,16 @@ public final class RMIConnection implements AutoCloseable {
 				namedvarlock.unlock();
 			}
 			variablesByLocalId.put(result.getLocalIdentifier(), result);
+
+			if (stream.associateVariables(result)) {
+				return result;
+			}
+			//close and throw the exception out of the lock
 		} finally {
 			stateModifyLock.unlock();
 		}
-		stream.associateVariables(result);
-		return result;
+		result.close();
+		throw new RMIIOFailureException("Failed to create variables, underlying stream IO error.");
 	}
 
 	private Lock getNamedVariablesGetLock(String name) {
