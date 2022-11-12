@@ -19,16 +19,20 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.invoke.MethodHandles;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.util.Objects;
 import java.util.Set;
 
 import saker.rmi.connection.RMIStream.CommandHandler;
-import saker.rmi.connection.RMIStream.ReferencesReleasedAction;
+import saker.util.ArrayUtils;
+import saker.util.ObjectUtils;
 import saker.util.ReflectUtils;
 import saker.util.io.ByteSource;
-import saker.util.io.DataInputUnsyncByteArrayInputStream;
 import saker.util.io.ReadWriteBufferOutputStream;
-import saker.util.io.function.IOConsumer;
+import saker.util.io.function.IOFunction;
 
 public class RMITestUtil {
 	private static final RMIStream.CommandHandler[] ORIGINAL_COMMAND_HANDLERS = RMIStream.COMMAND_HANDLERS.clone();
@@ -180,37 +184,58 @@ public class RMITestUtil {
 		return RMIStream.OBJECT_READERS;
 	}
 
-	public static void replaceCommandHandler(short command, IOConsumer<Object[]> handler) {
+	private interface TestCommandHandler {
+		public void callOriginalHandler(Object[] args);
+	}
+
+	private static final ThreadLocal<Method> CURRENTLY_FORWARDED_COMMAND_HANDLER_METHOD = new ThreadLocal<>();
+
+	public static void replaceCommandHandler(short command, IOFunction<Object[], ?> handler) {
 		CommandHandler originalcommand = ORIGINAL_COMMAND_HANDLERS[command];
 		if (originalcommand == null) {
 			throw new IllegalArgumentException("No original command handler: " + command);
 		}
-		RMIStream.COMMAND_HANDLERS[command] = new RMIStream.CommandHandler() {
-			@Override
-			public void accept(RMIStream stream, DataInputUnsyncByteArrayInputStream in,
-					ReferencesReleasedAction gcaction) throws IOException {
-				handler.accept(new Object[] { stream, in, gcaction });
-			}
-
-			@Override
-			public boolean isPreventGarbageCollection() {
-				return originalcommand.isPreventGarbageCollection();
-			}
-
-			@Override
-			public boolean isPendingResponse() {
-				return originalcommand.isPendingResponse();
-			}
-		};
+		//forward the calls via a proxy, as the default implementation should be called in some cases of the command handler
+		//and we can't do that by creating a CommandHandler subclass
+		//but rather create a proxy for the interfaces that the original command handler implements
+		CommandHandler proxy = (CommandHandler) Proxy.newProxyInstance(RMITestUtil.class.getClassLoader(),
+				ArrayUtils.appended(originalcommand.getClass().getInterfaces(), TestCommandHandler.class),
+				new InvocationHandler() {
+					@Override
+					public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+						if (CURRENTLY_FORWARDED_COMMAND_HANDLER_METHOD.get() != null) {
+							throw new IllegalStateException("test command handler recursively called");
+						}
+						if (method.isDefault()) {
+							//the default method should be called for all default methods, 
+							//as the command handlers are functional interfaces
+							return ReflectUtils.invokeDefaultMethodOn(method, proxy, args);
+						}
+						CURRENTLY_FORWARDED_COMMAND_HANDLER_METHOD.set(method);
+						try {
+							return handler.apply(args);
+						} finally {
+							CURRENTLY_FORWARDED_COMMAND_HANDLER_METHOD.remove();
+						}
+					}
+				});
+		RMIStream.COMMAND_HANDLERS[command] = proxy;
 	}
 
-	public static boolean isCommandPreventGarbageCollection(short command) {
-		return RMIStream.COMMAND_HANDLERS[command].isPreventGarbageCollection();
-	}
-
-	public static void callOriginalCommandHandler(short command, Object[] args) throws IOException {
-		ORIGINAL_COMMAND_HANDLERS[command].accept((RMIStream) args[0], (DataInputUnsyncByteArrayInputStream) args[1],
-				(ReferencesReleasedAction) args[2]);
+	public static Object callOriginalCommandHandler(short command, Object[] args) throws IOException {
+		Method method = CURRENTLY_FORWARDED_COMMAND_HANDLER_METHOD.get();
+		try {
+			Objects.requireNonNull(method, "method");
+			CommandHandler originalhandler = ORIGINAL_COMMAND_HANDLERS[command];
+			Objects.requireNonNull(originalhandler, "originalhandler");
+			return method.invoke(originalhandler, args);
+		} catch (IllegalAccessException e) {
+			throw new RuntimeException(e);
+		} catch (IllegalArgumentException e) {
+			throw new RuntimeException(e);
+		} catch (InvocationTargetException e) {
+			throw ObjectUtils.sneakyThrow(e.getCause());
+		}
 	}
 
 	public static void restoreInternalHandlers() {

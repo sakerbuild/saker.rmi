@@ -16,6 +16,7 @@
 package saker.rmi.connection;
 
 import java.lang.reflect.InvocationTargetException;
+import java.util.Set;
 
 import saker.rmi.exception.RMICallFailedException;
 
@@ -29,5 +30,10 @@ class NewInstanceResponse extends InterruptStatusTrackingRequestResponse {
 
 	public int getRemoteId() throws InvocationTargetException, RMICallFailedException {
 		return remoteId;
+	}
+
+	public Set<Class<?>> getInterfaces() throws InvocationTargetException, RMICallFailedException {
+		//only relevant in case of UnknownNewInstanceResponse, but this is declared here for better source compatibility
+		throw new UnsupportedOperationException();
 	}
 }

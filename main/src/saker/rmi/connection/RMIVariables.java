@@ -205,7 +205,23 @@ public class RMIVariables implements AutoCloseable {
 	 * @return <code>true</code> if closed.
 	 */
 	public boolean isClosed() {
-		return (state & (STATE_BIT_CLOSED | STATE_BIT_ABORTING)) != 0;
+		return (state & (STATE_BIT_CLOSED)) == STATE_BIT_CLOSED;
+	}
+
+	/**
+	 * Checks if this variables context is aborting.
+	 * <p>
+	 * The variables context is aborting, if it is closed, or closing is in process, but some requests are still
+	 * ongoing.
+	 * <p>
+	 * This always return <code>true</code> if {@link #isClosed()} returns <code>true</code>.
+	 * 
+	 * @return <code>true</code> if aborting.
+	 * 
+	 * @since saker.rmi 0.8.3
+	 */
+	public boolean isAborting() {
+		return (state & STATE_BIT_ABORTING) == STATE_BIT_ABORTING;
 	}
 
 	/**
@@ -223,6 +239,9 @@ public class RMIVariables implements AutoCloseable {
 	 * Closing of a variables context occurs asynchronously. All concurrent requests will be finished, and then the
 	 * variables will be completely closed. When that occurs, no more remote method calls can be instantiated through
 	 * it.
+	 * <p>
+	 * Closing this instance will cause the corresponding {@link RMIVariables} to be closed on the other endpoint as
+	 * well.
 	 * <p>
 	 * This method never throws an exception.
 	 */
@@ -998,10 +1017,6 @@ public class RMIVariables implements AutoCloseable {
 		return getClass().getSimpleName() + " [" + localIdentifier + ":" + remoteIdentifier + "]";
 	}
 
-	boolean isAborting() {
-		return (state & STATE_BIT_ABORTING) == STATE_BIT_ABORTING;
-	}
-
 	void addOngoingRequest() {
 		while (true) {
 			int state = this.state;
@@ -1017,6 +1032,24 @@ public class RMIVariables implements AutoCloseable {
 				continue;
 			}
 			return;
+		}
+	}
+
+	boolean tryOngoingRequest() {
+		while (true) {
+			int state = this.state;
+			int c = state & STATE_MASK_ONGOING_REQUEST_COUNT;
+			if (c != 0) {
+				//there's still an ongoing request, allow further requests
+			} else if (((state & (STATE_BIT_ABORTING)) == (STATE_BIT_ABORTING))) {
+				//else no requests are ongoing, but the variables has been closed by the user
+				return false;
+			}
+			//keep the flags, add one
+			if (!AIFU_state.compareAndSet(this, state, (state & ~STATE_MASK_ONGOING_REQUEST_COUNT) | (c + 1))) {
+				continue;
+			}
+			return true;
 		}
 	}
 
@@ -1072,31 +1105,7 @@ public class RMIVariables implements AutoCloseable {
 
 	private void invokeAllowedNonRedirectMethodAsync(int remoteid, MethodTransferProperties method, Object[] arguments)
 			throws RMIIOFailureException {
-		if (connection.getProtocolVersion() >= 2) {
-			//supports response for async
-			//the ongoing request will be removed when that response arrives
-			addOngoingRequest();
-			try {
-				stream.callMethodAsync(this, remoteid, method, arguments);
-			} catch (Throwable e) {
-				try {
-					removeOngoingRequest();
-				} catch (Throwable e2) {
-					e.addSuppressed(e2);
-				}
-				throw e;
-			}
-		} else {
-			//add ongoing request, and remove it right away
-			//which checks for the state of the RMIVariables
-			//as well as prevents the streams and connection to be concurrently closed
-			addOngoingRequest();
-			try {
-				stream.callMethodAsync(this, remoteid, method, arguments);
-			} finally {
-				removeOngoingRequest();
-			}
-		}
+		stream.callMethodAsync(this, remoteid, method, arguments);
 	}
 
 	static Object invokeRedirectMethod(Object remoteobject, Method redirectmethod, Object[] arguments)

@@ -3,9 +3,9 @@ package testing.saker.build.tests.rmi;
 import java.io.PrintStream;
 import java.util.concurrent.ThreadLocalRandom;
 
+import saker.rmi.connection.RMIConnection.IOErrorListener;
 import saker.rmi.connection.RMITestUtil;
 import saker.rmi.connection.RMIVariables;
-import saker.rmi.connection.RMIConnection.IOErrorListener;
 import saker.rmi.exception.RMIIOFailureException;
 import testing.saker.SakerTest;
 

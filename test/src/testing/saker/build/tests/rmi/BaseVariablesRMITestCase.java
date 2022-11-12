@@ -28,6 +28,9 @@ public abstract class BaseVariablesRMITestCase extends BaseRMITestCase {
 			clientVariables = cv;
 			serverVariables = RMITestUtil.getCorrespondingConnectionVariables(serverConnection, cv);
 			runVariablesTestImpl();
+		} finally {
+			clientVariables = null;
+			serverVariables = null;
 		}
 	}
 

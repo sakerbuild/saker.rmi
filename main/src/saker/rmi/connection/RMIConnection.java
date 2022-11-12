@@ -40,6 +40,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import saker.rmi.connection.RMIStream.RequestScopeHandler;
 import saker.rmi.connection.RMIStream.ThreadLocalRequestScopeHandler;
 import saker.rmi.exception.RMIResourceUnavailableException;
+import saker.rmi.exception.RMICallFailedException;
 import saker.rmi.exception.RMIIOFailureException;
 import saker.rmi.exception.RMIListenerException;
 import saker.rmi.exception.RMIRuntimeException;
@@ -853,7 +854,7 @@ public final class RMIConnection implements AutoCloseable {
 		return variablesByLocalId.get(identifier);
 	}
 
-	RMIVariables newRemoteVariables(String name, int remoteid, RMIStream stream) throws IOException {
+	RMIVariables newRemoteVariables(String name, int remoteid, RMIStream stream) {
 		if (ObjectUtils.isNullOrEmpty(name)) {
 			return newUnnamedRemoteVariables(remoteid, stream);
 		}
@@ -1432,7 +1433,7 @@ public final class RMIConnection implements AutoCloseable {
 		return result;
 	}
 
-	private RMIVariables newNamedRemoteVariables(String name, int remoteid, RMIStream stream) throws IOException {
+	private RMIVariables newNamedRemoteVariables(String name, int remoteid, RMIStream stream) {
 		NamedRMIVariables result;
 		final Lock namedvarlock = getNamedVariablesGetLock(name);
 		stateModifyLock.lock();
@@ -1449,8 +1450,17 @@ public final class RMIConnection implements AutoCloseable {
 						this, stream);
 				RMIVariables prev = variablesByNames.putIfAbsent(name, result);
 				if (prev != null) {
-					IOException cause = IOUtils.closeExc(result);
-					throw new IOException("Variables with name defined more than once: " + name, cause);
+					//this is a protocol error
+					//the named variables already exists, but we got more than one new named variables command
+					//this means that the client state didn't properly track the existence of this variables
+					//therefore there's likely an internal consistency error, or race condition in the library
+					IOException closingexc = IOUtils.closeExc(result);
+					RMICallFailedException throwexc = new RMICallFailedException(
+							"RMI connection consistency error, variables with name defined more than once: " + name);
+					if (closingexc != null) {
+						throwexc.addSuppressed(closingexc);
+					}
+					throw throwexc;
 				}
 			} finally {
 				namedvarlock.unlock();

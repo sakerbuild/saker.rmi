@@ -15,15 +15,23 @@
  */
 package testing.saker.build.tests.rmi;
 
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Map;
 
+import saker.rmi.connection.RMIConnection;
+import saker.rmi.connection.RMIOptions;
+import saker.rmi.connection.RMITestUtil;
 import saker.rmi.connection.RMIVariables;
 import saker.util.ReflectUtils;
+import saker.util.io.ResourceCloser;
 import testing.saker.SakerTest;
+import testing.saker.SakerTestCase;
 import testing.saker.build.tests.ExecutionOrderer;
 
 @SakerTest
-public class RMIAsyncMethodInvokeTest extends BaseVariablesRMITestCase {
+public class RMIAsyncMethodInvokeTest extends SakerTestCase {
 	private static ExecutionOrderer orderer;
 
 	public interface Stub {
@@ -39,17 +47,38 @@ public class RMIAsyncMethodInvokeTest extends BaseVariablesRMITestCase {
 	}
 
 	@Override
-	protected void runVariablesTestImpl() throws Exception {
+	public void runTest(Map<String, String> parameters) throws Throwable {
+		runTestWithProtocolVersion((short) RMIConnection.PROTOCOL_VERSION_1);
+		runTestWithProtocolVersion((short) RMIConnection.PROTOCOL_VERSION_2);
+	}
+
+	@SuppressWarnings("try") // unused ResourceCloser
+	private void runTestWithProtocolVersion(short protocolversion) throws Exception, IOException,
+			InvocationTargetException, NoSuchMethodException, AssertionError, InterruptedException {
+		RMIOptions baseoptions = new RMIOptions().maxStreamCount(1).classLoader(getClass().getClassLoader());
+		RMIConnection[] connections = RMITestUtil.createPipedConnection(baseoptions, baseoptions, protocolversion);
+		RMIConnection clientConnection = connections[0];
+		RMIConnection serverConnection = connections[1];
+		try (ResourceCloser closer = new ResourceCloser(clientConnection::closeWait, serverConnection::closeWait);
+				RMIVariables clientVariables = clientConnection.newVariables()) {
+			runTest(clientVariables);
+		}
+	}
+
+	private static void runTest(RMIVariables clientvars)
+			throws InvocationTargetException, NoSuchMethodException, AssertionError, InterruptedException {
 		orderer = new ExecutionOrderer();
 		orderer.addSection("call");
 		orderer.addSection("endcall");
 		orderer.addSection("f");
+		orderer.addSection("done");
 
-		Stub s = (Stub) clientVariables.newRemoteInstance(Impl.class);
+		Stub s = (Stub) clientvars.newRemoteInstance(Impl.class);
 		Method fmethod = ReflectUtils.getMethodAssert(Stub.class, "f");
 		orderer.enter("call");
 		RMIVariables.invokeRemoteMethodAsync(s, fmethod);
 		orderer.enter("endcall");
+		orderer.enter("done");
 	}
 
 }

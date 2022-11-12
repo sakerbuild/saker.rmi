@@ -13,7 +13,7 @@ import saker.rmi.connection.RMITestUtil;
 import saker.rmi.connection.RMIVariables;
 import saker.util.function.ThrowingRunnable;
 import saker.util.io.IOUtils;
-import saker.util.io.function.IOConsumer;
+import saker.util.io.function.IOFunction;
 import saker.util.thread.ExceptionThread;
 import testing.saker.SakerTest;
 import testing.saker.SakerTestCase;
@@ -44,9 +44,9 @@ public class ServerCloseViaRMITest extends SakerTestCase {
 
 			Semaphore methodresultsem = new Semaphore(0);
 
-			RMITestUtil.replaceCommandHandler(COMMAND_METHODRESULT, new IOConsumer<Object[]>() {
+			RMITestUtil.replaceCommandHandler(COMMAND_METHODRESULT, new IOFunction<Object[], Object>() {
 				@Override
-				public void accept(Object[] args) throws IOException {
+				public Object apply(Object[] args) throws IOException {
 					System.out.println("COMMAND_METHODRESULT() in");
 					try {
 						//a waiting here until the client side connection is closed
@@ -57,14 +57,14 @@ public class ServerCloseViaRMITest extends SakerTestCase {
 						e.printStackTrace();
 					}
 					System.out.println("COMMAND_METHODRESULT() call original");
-					RMITestUtil.callOriginalCommandHandler(COMMAND_METHODRESULT, args);
+					return RMITestUtil.callOriginalCommandHandler(COMMAND_METHODRESULT, args);
 				}
 			});
-			RMITestUtil.replaceCommandHandler(COMMAND_CLOSE_VARIABLES, new IOConsumer<Object[]>() {
+			RMITestUtil.replaceCommandHandler(COMMAND_CLOSE_VARIABLES, new IOFunction<Object[], Object>() {
 				@Override
-				public void accept(Object[] args) throws IOException {
+				public Object apply(Object[] args) throws IOException {
 					System.out.println("COMMAND_CLOSE_VARIABLES()");
-					RMITestUtil.callOriginalCommandHandler(COMMAND_CLOSE_VARIABLES, args);
+					return RMITestUtil.callOriginalCommandHandler(COMMAND_CLOSE_VARIABLES, args);
 				}
 			});
 

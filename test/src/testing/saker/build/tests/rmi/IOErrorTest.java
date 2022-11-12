@@ -12,9 +12,8 @@ import saker.rmi.connection.RMIOptions;
 import saker.rmi.connection.RMITestUtil;
 import saker.rmi.connection.RMIVariables;
 import saker.rmi.exception.RMIIOFailureException;
-import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.util.io.DataInputUnsyncByteArrayInputStream;
-import saker.util.io.function.IOConsumer;
+import saker.util.io.function.IOFunction;
 import testing.saker.SakerTest;
 import testing.saker.SakerTestCase;
 
@@ -83,9 +82,9 @@ public class IOErrorTest extends SakerTestCase {
 
 			Stub stub = (Stub) clientVariables.newRemoteInstance(Impl.class);
 
-			RMITestUtil.replaceCommandHandler(COMMAND_METHODRESULT, new IOConsumer<Object[]>() {
+			RMITestUtil.replaceCommandHandler(COMMAND_METHODRESULT, new IOFunction<Object[], Object>() {
 				@Override
-				public void accept(Object[] args) throws IOException {
+				public Object apply(Object[] args) throws IOException {
 					//replace the input of the method handler instead of directly throwing here
 					//so the request handler pending request counter is properly decremented
 					//by the original handler
@@ -104,7 +103,7 @@ public class IOErrorTest extends SakerTestCase {
 					System.out
 							.println("IOErrorTest.runVariablesTestImpl().new IOConsumer() {...}.accept()" + originalin);
 					nargs[1] = new DataInputUnsyncByteArrayInputStream(originalin.read(5));
-					RMITestUtil.callOriginalCommandHandler(COMMAND_METHODRESULT, nargs);
+					return RMITestUtil.callOriginalCommandHandler(COMMAND_METHODRESULT, nargs);
 				}
 			});
 			assertException(RMIIOFailureException.class, () -> stub.toString());
@@ -141,9 +140,9 @@ public class IOErrorTest extends SakerTestCase {
 
 			final short COMMAND_METHODRESULT = 3;
 
-			RMITestUtil.replaceCommandHandler(COMMAND_METHODRESULT, new IOConsumer<Object[]>() {
+			RMITestUtil.replaceCommandHandler(COMMAND_METHODRESULT, new IOFunction<Object[], Object>() {
 				@Override
-				public void accept(Object[] args) throws IOException {
+				public Object apply(Object[] args) throws IOException {
 					//replace the input of the method handler instead of directly throwing here
 					//so the request handler pending request counter is properly decremented
 					//by the original handler
@@ -154,7 +153,7 @@ public class IOErrorTest extends SakerTestCase {
 					// DataInputUnsyncByteArrayInputStream
 					// ReferencesReleasedAction
 					nargs[1] = new DataInputUnsyncByteArrayInputStream(new byte[] { 1 });
-					RMITestUtil.callOriginalCommandHandler(COMMAND_METHODRESULT, nargs);
+					return RMITestUtil.callOriginalCommandHandler(COMMAND_METHODRESULT, nargs);
 				}
 			});
 

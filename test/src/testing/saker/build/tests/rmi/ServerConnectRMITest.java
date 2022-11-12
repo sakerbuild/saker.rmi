@@ -20,11 +20,11 @@ import java.util.Map;
 
 import saker.rmi.connection.RMIConnection;
 import saker.rmi.connection.RMIConnection.IOErrorListener;
-import saker.util.thread.ThreadUtils;
 import saker.rmi.connection.RMIOptions;
 import saker.rmi.connection.RMIServer;
 import saker.rmi.connection.RMITestUtil;
 import saker.rmi.connection.RMIVariables;
+import saker.util.thread.ThreadUtils;
 import testing.saker.SakerTest;
 import testing.saker.SakerTestCase;
 import testing.saker.build.tests.rmi.BaseRMITestCase.ThreadExecutor;

@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit;
 import saker.rmi.connection.RMIConnection.IOErrorListener;
 import saker.rmi.connection.RMITestUtil;
 import saker.util.ReflectUtils;
-import saker.util.io.function.IOConsumer;
+import saker.util.io.function.IOFunction;
 import saker.util.thread.ThreadUtils;
 import testing.saker.SakerTest;
 
@@ -80,9 +80,9 @@ public class MidRequestGCTest extends BaseVariablesRMITestCase {
 
 			Semaphore gcsemaphore = new Semaphore(0);
 
-			RMITestUtil.replaceCommandHandler(COMMAND_METHODRESULT, new IOConsumer<Object[]>() {
+			RMITestUtil.replaceCommandHandler(COMMAND_METHODRESULT, new IOFunction<Object[], Object>() {
 				@Override
-				public void accept(Object[] args) throws IOException {
+				public Object apply(Object[] args) throws IOException {
 					try {
 						System.out.println("MidRequestGCTest.COMMAND_METHODRESULT() in " + this);
 						for (int i = 0; i < 50; ++i) {
@@ -100,7 +100,7 @@ public class MidRequestGCTest extends BaseVariablesRMITestCase {
 					} finally {
 						//need to always call this
 						System.out.println("MidRequestGCTest.COMMAND_METHODRESULT() call original handler");
-						RMITestUtil.callOriginalCommandHandler(COMMAND_METHODRESULT, args);
+						return RMITestUtil.callOriginalCommandHandler(COMMAND_METHODRESULT, args);
 					}
 				}
 			});

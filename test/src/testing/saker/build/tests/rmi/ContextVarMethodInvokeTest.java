@@ -16,6 +16,7 @@ import saker.rmi.exception.RMICallForbiddenException;
 import saker.rmi.exception.RMIContextVariableNotFoundException;
 import saker.util.ObjectUtils;
 import saker.util.ReflectUtils;
+import saker.util.io.ResourceCloser;
 import testing.saker.SakerTest;
 import testing.saker.SakerTestCase;
 
@@ -81,14 +82,16 @@ public class ContextVarMethodInvokeTest extends SakerTestCase {
 		testProtocolVersion((short) RMIConnection.PROTOCOL_VERSION_2);
 	}
 
+	@SuppressWarnings("try") // unused ResourceCloser
 	private void testProtocolVersion(short protocolversion)
 			throws Exception, IOException, InvocationTargetException, AssertionError {
 		System.out.println("ContextVarMethodInvokeTest.testProtocolVersion() test protocol version " + protocolversion);
 		Thread currentthread = Thread.currentThread();
 		RMIOptions baseoptions = new RMIOptions().maxStreamCount(1).classLoader(getClass().getClassLoader());
 		RMIConnection[] connections = RMITestUtil.createPipedConnection(baseoptions, baseoptions, protocolversion);
-		try (RMIConnection clientConnection = connections[0];
-				RMIConnection serverConnection = connections[1];
+		RMIConnection clientConnection = connections[0];
+		RMIConnection serverConnection = connections[1];
+		try (ResourceCloser closer = new ResourceCloser(clientConnection::closeWait, serverConnection::closeWait);
 				RMIVariables clientVariables = clientConnection.newVariables();) {
 
 			final String varname = "implvar";

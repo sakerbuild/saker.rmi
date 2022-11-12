@@ -16,7 +16,7 @@ import saker.rmi.io.RMIObjectInput;
 import saker.rmi.io.RMIObjectOutput;
 import saker.rmi.io.wrap.RMIWrapper;
 import saker.util.ReflectUtils;
-import saker.util.io.function.IOConsumer;
+import saker.util.io.function.IOFunction;
 import saker.util.thread.ThreadUtils;
 import testing.saker.SakerTest;
 
@@ -178,9 +178,9 @@ public class MidSerializationGCTest extends BaseVariablesRMITestCase {
 			});
 			final short COMMAND_METHODRESULT = 3;
 
-			RMITestUtil.replaceCommandHandler(COMMAND_METHODRESULT, new IOConsumer<Object[]>() {
+			RMITestUtil.replaceCommandHandler(COMMAND_METHODRESULT,new IOFunction<Object[], Object>() {
 				@Override
-				public void accept(Object[] args) throws IOException {
+				public Object apply(Object[] args) throws IOException {
 					try {
 						System.out.println("MidSerializationGCTest.COMMAND_METHODRESULT() in " + this);
 						if (gotSecondStub) {
@@ -200,12 +200,10 @@ public class MidSerializationGCTest extends BaseVariablesRMITestCase {
 					} finally {
 						//need to always call this
 						System.out.println("MidSerializationGCTest.COMMAND_METHODRESULT() call original handler");
-						RMITestUtil.callOriginalCommandHandler(COMMAND_METHODRESULT, args);
+						return RMITestUtil.callOriginalCommandHandler(COMMAND_METHODRESULT, args);
 					}
 				}
 			});
-			assertTrue(RMITestUtil.isCommandPreventGarbageCollection(COMMAND_METHODRESULT),
-					"invalid config, method result command doesn't prevent gc");
 			Impl impl = new Impl();
 			Thread releaserthread = ThreadUtils.startDaemonThread(() -> {
 				try {
