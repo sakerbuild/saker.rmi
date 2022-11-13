@@ -97,12 +97,11 @@ public class RMIAsyncMethodInvokeMassTest extends SakerTestCase {
 						}
 					}
 				} finally {
+					clientVariables.close();
 					if (waitvars) {
-						clientVariables.closeWait();
+						clientVariables.waitClosure();
 						//all the async calls should be finished when the variables is closed
 						assertEquals(i.count, CALL_COUNT);
-					} else {
-						clientVariables.close();
 					}
 				}
 			} finally {

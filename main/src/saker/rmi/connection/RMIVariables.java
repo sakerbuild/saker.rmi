@@ -291,16 +291,17 @@ public class RMIVariables implements AutoCloseable {
 	}
 
 	/**
-	 * Closes this RMI variables and waits for all requests to finish.
+	 * Waits for this RMI variables to get closed, and all request to be finished.
 	 * <p>
-	 * Works the same way as {@link #close()}, but also waits for the requests to finish.
+	 * This method doesn't close the variables, only waits for it to get closed, and the ongoing request to be finished.
+	 * <p>
+	 * You need to call {@link #close()} in some other way, otherwise this method may wait indefinitely.
 	 * 
 	 * @throws InterruptedException
 	 *             If the current thread is interrupted while waiting.
 	 * @since saker.rmi 0.8.3
 	 */
-	public void closeWait() throws InterruptedException {
-		close();
+	public void waitClosure() throws InterruptedException {
 		closedLatch.await();
 	}
 
