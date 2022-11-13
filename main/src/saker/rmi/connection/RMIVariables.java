@@ -15,7 +15,6 @@
  */
 package saker.rmi.connection;
 
-import java.io.IOException;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -39,16 +38,17 @@ import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 import saker.rmi.exception.RMICallFailedException;
 import saker.rmi.exception.RMICallForbiddenException;
-import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.rmi.exception.RMIContextVariableNotFoundException;
 import saker.rmi.exception.RMIIOFailureException;
 import saker.rmi.exception.RMIObjectTransferFailureException;
+import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.rmi.exception.RMIRuntimeException;
 import saker.util.ImmutableUtils;
 import saker.util.ObjectUtils;
 import saker.util.ReflectUtils;
 import saker.util.classloader.FilteringClassLoader;
 import saker.util.classloader.MultiClassLoader;
+import saker.util.thread.BooleanLatch;
 
 /**
  * Class for enclosing RMI proxies, referenced objects, and providing invocation functionality for the RMI runtime.
@@ -173,6 +173,7 @@ public class RMIVariables implements AutoCloseable {
 	 * @see #STATE_MASK_ONGOING_ASYNC_REQUEST_COUNT
 	 */
 	private volatile long state;
+	private final BooleanLatch closedLatch = BooleanLatch.newBooleanLatch();
 
 	private RMITransferPropertiesHolder properties;
 
@@ -286,6 +287,20 @@ public class RMIVariables implements AutoCloseable {
 			}
 			break;
 		}
+	}
+
+	/**
+	 * Closes this RMI variables and waits for all requests to finish.
+	 * <p>
+	 * Works the same way as {@link #close()}, but also waits for the requests to finish.
+	 * 
+	 * @throws InterruptedException
+	 *             If the current thread is interrupted while waiting.
+	 * @since saker.rmi 0.8.3
+	 */
+	public void closeWait() throws InterruptedException {
+		close();
+		closedLatch.await();
 	}
 
 	/**
@@ -1728,21 +1743,25 @@ public class RMIVariables implements AutoCloseable {
 	 */
 	private void closeWithNoOngoingRequest() {
 		//enqueue a reference to notify the gc thread about exiting
-		gcThreadThisWeakReference.enqueue();
+		try {
+			gcThreadThisWeakReference.enqueue();
 
-		connection.closeVariables(this);
+			connection.closeVariables(this);
 
-		cachedRemoteProxies.clear();
-		localIdentifiersToLocalObjects.clear();
-		synchronized (refSync) {
-			localObjectsToLocalReferences.clear();
+			cachedRemoteProxies.clear();
+			localIdentifiersToLocalObjects.clear();
+			synchronized (refSync) {
+				localObjectsToLocalReferences.clear();
+			}
+			proxyBaseClassLoader = null;
+			proxyConstructors = null;
+			proxyMarkerClass = null;
+			markerClassLookup = null;
+			multiProxyClassDefiners = null;
+			properties = null;
+		} finally {
+			closedLatch.signal();
 		}
-		proxyBaseClassLoader = null;
-		proxyConstructors = null;
-		proxyMarkerClass = null;
-		markerClassLookup = null;
-		multiProxyClassDefiners = null;
-		properties = null;
 	}
 
 }

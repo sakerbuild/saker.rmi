@@ -59,17 +59,19 @@ public class RMIAsyncMethodInvokeMassTest extends SakerTestCase {
 
 	@Override
 	public void runTest(Map<String, String> parameters) throws Throwable {
-		runMassTest(false);
-		runMassTest(true);
+		runMassTest(false, false);
+		runMassTest(false, true);
+		runMassTest(true, false);
+		runMassTest(true, true);
 	}
 
-	private void runMassTest(boolean callsyncmethodtoo) throws Exception, InvocationTargetException,
+	private void runMassTest(boolean callsyncmethodtoo, boolean waitvars) throws Exception, InvocationTargetException,
 			NoSuchMethodException, AssertionError, IOException, InterruptedException {
 		final int CALL_COUNT = 10000;
 
 		RMIOptions baseoptions = new RMIOptions().classLoader(getClass().getClassLoader());
 
-		Impl i;
+		Impl i = null;
 		Stub s;
 		Stub serverstub;
 		RMIConnection[] connections = RMITestUtil.createPipedConnection(baseoptions);
@@ -95,7 +97,13 @@ public class RMIAsyncMethodInvokeMassTest extends SakerTestCase {
 						}
 					}
 				} finally {
-					clientVariables.close();
+					if (waitvars) {
+						clientVariables.closeWait();
+						//all the async calls should be finished when the variables is closed
+						assertEquals(i.count, CALL_COUNT);
+					} else {
+						clientVariables.close();
+					}
 				}
 			} finally {
 				clientConnection.closeWait();
