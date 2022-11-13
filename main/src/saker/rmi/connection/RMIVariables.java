@@ -1269,7 +1269,7 @@ public class RMIVariables implements AutoCloseable {
 			}
 		}
 		RemoteProxyObject result = createProxyObjectForClass(requestedclass, remoteid);
-		return putCreatedProxyToCache(result, remoteid);
+		return putCreatedProxyToCache(result, remoteid, cached);
 	}
 
 	/**
@@ -1285,7 +1285,7 @@ public class RMIVariables implements AutoCloseable {
 			}
 		}
 		RemoteProxyObject result = createProxyObject(interfaces, remoteid);
-		return putCreatedProxyToCache(result, remoteid);
+		return putCreatedProxyToCache(result, remoteid, cached);
 	}
 
 	Object getObjectWithLocalId(int localid) {
@@ -1652,9 +1652,9 @@ public class RMIVariables implements AutoCloseable {
 		}
 	}
 
-	private RemoteProxyObject putCreatedProxyToCache(RemoteProxyObject result, int remoteid) {
+	private RemoteProxyObject putCreatedProxyToCache(RemoteProxyObject result, int remoteid,
+			RemoteProxyReference cached) {
 		RemoteProxyReference putreference = new RemoteProxyReference(result, gcReferenceQueue, remoteid);
-		RemoteProxyReference cached = cachedRemoteProxies.get(remoteid);
 		while (true) {
 			if (cached == null) {
 				RemoteProxyReference prev = cachedRemoteProxies.putIfAbsent(remoteid, putreference);

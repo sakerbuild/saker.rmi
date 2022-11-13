@@ -23,14 +23,20 @@ import java.io.Serializable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.Set;
+import java.util.concurrent.Semaphore;
+import java.util.function.Consumer;
 
 import saker.rmi.annot.transfer.RMISerialize;
 import saker.rmi.annot.transfer.RMIWrap;
 import saker.rmi.connection.RMIConnection;
+import saker.rmi.connection.RMIVariables;
 import saker.rmi.exception.RMICallFailedException;
 import saker.rmi.io.RMIObjectInput;
 import saker.rmi.io.RMIObjectOutput;
 import saker.rmi.io.wrap.RMIWrapper;
+import saker.util.ObjectUtils;
 import testing.saker.SakerTest;
 
 @SakerTest
@@ -220,9 +226,17 @@ public class RMITransferTest extends BaseVariablesRMITestCase {
 		public default void redispatch(Runnable run) {
 			run.run();
 		}
+
+		public Object getTheObject();
+
+		public void checkEqualsTheObject(Object obj);
+
+		public void offerTheObject(Consumer<? super Object> consumer);
 	}
 
 	public static class Impl implements Stub {
+
+		private final Object theObject = new Object();
 
 		@Override
 		public byte[] f(byte[] b) {
@@ -343,6 +357,21 @@ public class RMITransferTest extends BaseVariablesRMITestCase {
 		public Field field(Field f) {
 			return f;
 		}
+
+		@Override
+		public Object getTheObject() {
+			return theObject;
+		}
+
+		@Override
+		public void checkEqualsTheObject(Object obj) {
+			assertIdentityEquals(theObject, obj);
+		}
+
+		@Override
+		public void offerTheObject(Consumer<? super Object> consumer) {
+			consumer.accept(theObject);
+		}
 	}
 
 	/**
@@ -445,6 +474,45 @@ public class RMITransferTest extends BaseVariablesRMITestCase {
 
 		//check again that connection still works
 		assertEquals(s.passThroughString("xyz"), "xyz");
+
+		//check that the transferred object identity equal to each other
+		Object theobj1 = s.getTheObject();
+		assertTrue(RMIConnection.isRemoteObject(theobj1));
+		assertIdentityEquals(theobj1, s.getTheObject());
+		for (int i = 0; i < 50; i++) {
+			Object o = s.getTheObject();
+			assertIdentityEquals(theobj1, o);
+			s.checkEqualsTheObject(theobj1);
+			s.checkEqualsTheObject(o);
+		}
+
+		//had some concurrency bugs in this case, where multiple proxies were created for a single remote object
+		Method offerobjmethod = Stub.class.getMethod("offerTheObject", Consumer.class);
+		for (int i = 0; i < 10; i++) {
+			Stub nstub = (Stub) clientVariables.newRemoteInstance(Impl.class);
+			Semaphore sem = new Semaphore(0);
+			Set<Object> collector = Collections.synchronizedSet(ObjectUtils.newIdentityHashSet());
+			for (int j = 0; j < 10; j++) {
+				RMIVariables.invokeRemoteMethodAsync(nstub, offerobjmethod, (Consumer<Object>) o -> {
+					collector.add(o);
+					sem.release();
+				});
+			}
+			sem.acquire(10);
+			//only a single object should be in the collector, as all presented objects should be identity same
+			if (collector.size() != 1) {
+				StringBuilder sb = new StringBuilder();
+				for (Object o : collector) {
+					sb.append(o.getClass());
+					sb.append(" : ");
+					sb.append(o);
+					sb.append(" | ");
+					sb.append(System.identityHashCode(o));
+					sb.append("\n");
+				}
+				throw fail(sb.toString());
+			}
+		}
 	}
 
 }
