@@ -1141,8 +1141,10 @@ public class RMIVariables implements AutoCloseable {
 			long bothc = state & STATE_MASK_BOTH_REQUEST_COUNT;
 			long c = (bothc & STATE_MASK_ONGOING_ASYNC_REQUEST_COUNT) >>> STATE_ONGOING_ASYNC_REQUEST_COUNT_SHIFT;
 			if (c == 0) {
-				//safety check
-				throw new IllegalStateException("No ongoing async requests.");
+				//if the async request count is zero, then just ignore this removal, don't throw
+				//this can happen if the IO reading breaks, and the async request count gets cleared
+				//in clearAsyncRequestsOnReadIOFailure() before we get here
+				return;
 			}
 			long nbothc = (bothc & STATE_MASK_ONGOING_REQUEST_COUNT)
 					| ((c - 1) << STATE_ONGOING_ASYNC_REQUEST_COUNT_SHIFT);
@@ -1165,13 +1167,13 @@ public class RMIVariables implements AutoCloseable {
 	void clearAsyncRequestsOnReadIOFailure() {
 		while (true) {
 			long state = this.state;
+			if (((state & STATE_BIT_CLOSED) == STATE_BIT_CLOSED)) {
+				//the state is already closed, so we don't have anything to do
+				return;
+			}
 
 			long bothc = state & STATE_MASK_BOTH_REQUEST_COUNT;
-			long c = (bothc & STATE_MASK_ONGOING_ASYNC_REQUEST_COUNT) >>> STATE_ONGOING_ASYNC_REQUEST_COUNT_SHIFT;
-			if (c == 0) {
-				//safety check
-				throw new IllegalStateException("No ongoing async requests.");
-			}
+			//set the ongoing async request count to 0 by removing those bits
 			long nbothc = (bothc & STATE_MASK_ONGOING_REQUEST_COUNT);
 			//also set the aborting flag, because the variables should be closing after a read failure on the stream
 			//because we won't be receiving any response anymore 
