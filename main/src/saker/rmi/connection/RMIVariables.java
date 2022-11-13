@@ -32,9 +32,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
+import java.util.concurrent.locks.Lock;
 
 import saker.rmi.exception.RMICallFailedException;
 import saker.rmi.exception.RMICallForbiddenException;
@@ -49,6 +49,7 @@ import saker.util.ReflectUtils;
 import saker.util.classloader.FilteringClassLoader;
 import saker.util.classloader.MultiClassLoader;
 import saker.util.thread.BooleanLatch;
+import saker.util.thread.ThreadUtils;
 
 /**
  * Class for enclosing RMI proxies, referenced objects, and providing invocation functionality for the RMI runtime.
@@ -183,12 +184,12 @@ public class RMIVariables implements AutoCloseable {
 	 * This field is kept on a per RMIVariables basis instead of a per RMIStream basis, as the objects are tracked in
 	 * variables contexts.
 	 * <p>
-	 * The waiting on this sempahore is interruptable when writing the gc command, but is acquired uninterruptibly when
-	 * waiting to write command other than gc. This is because the semaphore should be available quickly after a gc
-	 * command, so interruption handling is not strictly necessary in case an other commands, however, in case when
-	 * writing a gc command, it can be handled on the gc thread.
+	 * The waiting on this lock is interruptable when writing the gc command, but is acquired uninterruptibly when
+	 * waiting to write command other than gc. This is because the lock should be available quickly after a gc command,
+	 * so interruption handling is not strictly necessary in case an other commands, however, in case when writing a gc
+	 * command, it can be handled on the gc thread.
 	 */
-	protected final Semaphore gcCommandSemaphore = new Semaphore(1);
+	protected final Lock gcCommandLock = ThreadUtils.newExclusiveLock();
 
 	RMIVariables(int localIdentifier, int remoteIdentifier, RMIConnection connection, RMIStream stream) {
 		//XXX we could allow the user to add custom transfer properties just for this variables instance
