@@ -35,12 +35,12 @@ exportall(
 	out bundlepaths = [
 		include(export, Path: api/api.build)[jar][Path],
 		include(export, Path: main/main.build)[jar][Path],
-		include(export)[sourcesjar][Path],
+		export()[sourcesjar][Path],
 	]
 ) {
 }
 install(){
-	nest.local.install(include(exportall)[bundlepaths])
+	nest.local.install(exportall()[bundlepaths])
 }
 test(
 	in jdk = saker.java.sdk(),

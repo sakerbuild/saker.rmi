@@ -26,7 +26,7 @@ export(
 	out javac,
 	out jar,
 ){
-	$compile = include(compile)
+	$compile = compile()
 	$javac = $compile[javac]
 	$jar = saker.jar.create(
 		Output: saker.rmi.jar,
@@ -54,6 +54,6 @@ export(
 	)
 }
 install(){
-	$export = include(export)
+	$export = export()
 	nest.local.install($export[jar][Path])
 }
