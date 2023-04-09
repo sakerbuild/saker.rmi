@@ -51,7 +51,7 @@ steps:
 - script: bash /tmp/azure_ubuntu_jdksetup_variables.sh $(J_JAVA_MAJOR)
   displayName: 'Setup JDKs'
 - script: |
-    $(JAVA_EXEC_HOME)/bin/java -jar saker.build.jar -bd build -trace pwd://build/build_test.trace test
+    java -jar saker.build.jar -bd build -trace pwd://build/build_test.trace test
     retVal=$?
     if [ $retVal -ne 0 ]; then
       if [ $(J_JAVA_MAJOR) -eq 11 ]; then
@@ -69,7 +69,7 @@ steps:
   inputs:
     pathtoPublish: build/build_test.trace
     artifactName: 'test_trace_$(J_JAVA_MAJOR)'
-- script: $(JAVA_EXEC_HOME)/bin/java -jar saker.build.jar -bd build -trace pwd://build/build_export.trace export
+- script: java -jar saker.build.jar -bd build -trace pwd://build/build_export.trace export
   displayName: 'Export'
 - task: PublishBuildArtifacts@1
   condition: always()
