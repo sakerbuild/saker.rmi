@@ -8,40 +8,28 @@ strategy:
   matrix:
     Java8:
       J_JAVA_MAJOR: '8'
-      JAVA_EXEC_HOME: $(JAVA_HOME_8_X64)
     Java9:
       J_JAVA_MAJOR: '9'
-      JAVA_EXEC_HOME: $(JAVA_HOME_9_X64)
     Java10:
       J_JAVA_MAJOR: '10'
-      JAVA_EXEC_HOME: $(JAVA_HOME_10_X64)
     Java11:
       J_JAVA_MAJOR: '11'
-      JAVA_EXEC_HOME: $(JAVA_HOME_11_X64)
     Java12:
       J_JAVA_MAJOR: '12'
-      JAVA_EXEC_HOME: $(JAVA_HOME_12_X64)
     Java13:
       J_JAVA_MAJOR: '13'
-      JAVA_EXEC_HOME: $(JAVA_HOME_13_X64)
     Java14:
       J_JAVA_MAJOR: '14'
-      JAVA_EXEC_HOME: $(JAVA_HOME_14_X64)
     Java15:
       J_JAVA_MAJOR: '15'
-      JAVA_EXEC_HOME: $(JAVA_HOME_15_X64)
     Java16:
       J_JAVA_MAJOR: '16'
-      JAVA_EXEC_HOME: $(JAVA_HOME_16_X64)
     Java17:
       J_JAVA_MAJOR: '17'
-      JAVA_EXEC_HOME: $(JAVA_HOME_17_X64)
     Java18:
       J_JAVA_MAJOR: '18'
-      JAVA_EXEC_HOME: $(JAVA_HOME_18_X64)
     Java19:
       J_JAVA_MAJOR: '19'
-      JAVA_EXEC_HOME: $(JAVA_HOME_19_X64)
 
 steps:
 - script: curl -L https://api.nest.saker.build/bundle/download/saker.build-v$(curl -s https://mirror.nest.saker.build/badges/saker.build/latest.txt) -o saker.build.jar
@@ -51,7 +39,7 @@ steps:
 - script: bash /tmp/azure_ubuntu_jdksetup_variables.sh $(J_JAVA_MAJOR)
   displayName: 'Setup JDKs'
 - script: |
-    java -jar saker.build.jar -bd build -trace pwd://build/build_test.trace test
+    java -jar saker.build.jar -bd build "-EUsaker.java.jre.install.locations=$(JAVA_HOME_8_X64);$(JAVA_HOME_9_X64);$(JAVA_HOME_10_X64);$(JAVA_HOME_11_X64);$(JAVA_HOME_12_X64);$(JAVA_HOME_13_X64);$(JAVA_HOME_14_X64);$(JAVA_HOME_15_X64);$(JAVA_HOME_16_X64);$(JAVA_HOME_17_X64);$(JAVA_HOME_18_X64);$(JAVA_HOME_19_X64)" -trace pwd://build/build_test.trace "testjava$(J_JAVA_MAJOR)"
     retVal=$?
     if [ $retVal -ne 0 ]; then
       if [ $(J_JAVA_MAJOR) -eq 11 ]; then
@@ -69,7 +57,7 @@ steps:
   inputs:
     pathtoPublish: build/build_test.trace
     artifactName: 'test_trace_$(J_JAVA_MAJOR)'
-- script: java -jar saker.build.jar -bd build -trace pwd://build/build_export.trace export
+- script: java -jar saker.build.jar -bd build "-EUsaker.java.jre.install.locations=$(JAVA_HOME_8_X64);$(JAVA_HOME_9_X64);$(JAVA_HOME_10_X64);$(JAVA_HOME_11_X64);$(JAVA_HOME_12_X64);$(JAVA_HOME_13_X64);$(JAVA_HOME_14_X64);$(JAVA_HOME_15_X64);$(JAVA_HOME_16_X64);$(JAVA_HOME_17_X64);$(JAVA_HOME_18_X64);$(JAVA_HOME_19_X64)" -trace pwd://build/build_export.trace export
   displayName: 'Export'
 - task: PublishBuildArtifacts@1
   condition: always()
