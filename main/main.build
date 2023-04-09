@@ -8,15 +8,16 @@ compile(
 	$javac = saker.java.compile(
 		SourceDirectories: [
 			src/,
-			../asm/v7.2/,
 		],
 		ClassPath: [
 			$apijavac,
-			#only the saker.util, no transitive for now. TODO fix
+			# only the saker.util, no transitive dependencies, because it also includes saker.rmi
+			# so that would be a circular dependency in this case
 			saker.java.classpath.bundle(nest.dependency.resolve(
 				Bundles: saker.util,
 				Filters: nest.dependency.filter.kind([])
 			)),
+			saker.maven.classpath(Artifacts: saker.maven.resolve("org.ow2.asm:asm:jar:7.2"))
 		],
 		Identifier: "main{ $testing ? "-testing" : "" }",
 		CompilerOptions: global(COMPILER_OPTIONS),
