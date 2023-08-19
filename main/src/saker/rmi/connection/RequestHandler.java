@@ -16,7 +16,6 @@
 package saker.rmi.connection;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;

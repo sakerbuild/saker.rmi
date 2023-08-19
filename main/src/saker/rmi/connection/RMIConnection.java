@@ -39,10 +39,10 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import saker.rmi.connection.RMIStream.RequestScopeHandler;
 import saker.rmi.connection.RMIStream.ThreadLocalRequestScopeHandler;
-import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.rmi.exception.RMICallFailedException;
 import saker.rmi.exception.RMIIOFailureException;
 import saker.rmi.exception.RMIListenerException;
+import saker.rmi.exception.RMIResourceUnavailableException;
 import saker.rmi.exception.RMIRuntimeException;
 import saker.util.ArrayUtils;
 import saker.util.ConcurrentPrependAccumulator;
